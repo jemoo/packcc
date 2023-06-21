@@ -1,0 +1,111 @@
+# This code is hereby placed in the public domain.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHORS ''AS IS'' AND ANY EXPRESS
+# OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE
+# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+%prefix "vsharp"
+
+%source {
+#include <stdio.h>
+#include <stdlib.h>
+
+static const char *dbg_str[] = { "EvaluatingRule", "MatchedRule", "AbandoningRule" };
+void vs_debug(int event, const char* rule, int level, size_t pos, const char* buffer, int length);
+#define PCC_DEBUG(auxil, event, rule, level, pos, buffer, length) vs_debug(event, rule, (int)level, pos, buffer, (int)length)
+
+int vs_getchar();
+#define PCC_GETCHAR(auxil)  vs_getchar()
+}
+
+compilation_unit
+    : _ end_of_file
+    ;
+
+#top_level_declaration
+#    : import_declaration
+#    ;
+
+#import_declaration
+#    : 'import'
+#    ;
+
+_     : ( space | end_of_line | comment )*
+
+space
+    : [ \u0009\u000B\u000C]
+    ;
+
+end_of_line
+    : '\n' | '\r\n' | '\r'
+    ;
+
+comment
+    : single_line_comment
+    | delimited_comment
+    ;
+
+single_line_comment
+    : '//' ( !end_of_line . )*
+    ;
+
+delimited_comment
+    : '/*' ( !'*/' . )* '*/'
+    ;
+
+end_of_file
+    : !.
+    ;
+
+%%
+char* g_text = NULL;
+long g_length = 0;
+long g_readpos = 0;
+
+int vs_readfile(const char* filename) {
+    FILE* textfile;
+    textfile = fopen(filename, "r");
+    if (textfile == NULL)
+        return 1;
+
+    fseek(textfile, 0L, SEEK_END);
+    g_length = ftell(textfile);
+    fseek(textfile, 0L, SEEK_SET);
+
+    g_text = (char*)calloc(g_length, sizeof(char));
+    if (g_text == NULL)
+        return 1;
+
+    fread(g_text, sizeof(char), g_length, textfile);
+    fclose(textfile);
+    return 0;
+}
+
+int vs_getchar() {
+    if (!g_text || g_readpos >= g_length)
+        return -1;
+    int ch = g_text[g_readpos++];
+    return ch;
+}
+
+void vs_debug(int event, const char* rule, int level, size_t pos, const char* buffer, int length) {
+    fprintf(stderr, "%*s%s %s @%zu [%.*s]\n", level*2, "", dbg_str[event], rule, pos, length, buffer);
+}
+
+int main() {
+    if (vs_readfile("./vsharp.vs") != 0)
+        return 1;
+
+    vsharp_context_t *ctx = vsharp_create(NULL);
+    while (vsharp_parse(ctx, NULL));
+    vsharp_destroy(ctx);
+    return 0;
+}
