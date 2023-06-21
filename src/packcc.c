@@ -2060,14 +2060,14 @@ static node_t *parse_primary(context_t *ctx, node_t *rule) {
         const size_t q = ctx->bufcur;
         size_t r = VOID_VALUE, s = VOID_VALUE;
         match_spaces(ctx);
-        if (match_character(ctx, ':')) {
+        if (match_string(ctx, ":=")) {
             match_spaces(ctx);
             r = ctx->bufcur;
             if (!match_identifier(ctx)) goto EXCEPTION;
             s = ctx->bufcur;
             match_spaces(ctx);
         }
-        if (match_string(ctx, "<-")) goto EXCEPTION;
+        if (match_character(ctx, ':')) goto EXCEPTION;
         n_p = create_node(NODE_REFERENCE);
         if (r == VOID_VALUE) {
             assert(q >= p);
@@ -2351,12 +2351,12 @@ static node_t *parse_expression(context_t *ctx, node_t *rule) {
     n_s = parse_sequence(ctx, rule);
     if (n_s == NULL) goto EXCEPTION;
     q = ctx->bufcur;
-    if (match_character(ctx, '/')) {
+    if (match_character(ctx, '|')) {
         ctx->bufcur = q;
         n_e = create_node(NODE_ALTERNATE);
         a_s = &n_e->data.alternate.nodes;
         node_array__add(a_s, n_s);
-        while (match_character(ctx, '/')) {
+        while (match_character(ctx, '|')) {
             match_spaces(ctx);
             n_s = parse_sequence(ctx, rule);
             if (n_s == NULL) goto EXCEPTION;
@@ -2388,11 +2388,12 @@ static node_t *parse_rule(context_t *ctx) {
     if (!match_identifier(ctx)) goto EXCEPTION;
     q = ctx->bufcur;
     match_spaces(ctx);
-    if (!match_string(ctx, "<-")) goto EXCEPTION;
+    if (!match_character(ctx, ':')) goto EXCEPTION;
     match_spaces(ctx);
     n_r = create_node(NODE_RULE);
     n_r->data.rule.expr = parse_expression(ctx, n_r);
     if (n_r->data.rule.expr == NULL) goto EXCEPTION;
+    if (!match_character(ctx, ';')) goto EXCEPTION;
     assert(q >= p);
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;
