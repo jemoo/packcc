@@ -2397,8 +2397,9 @@ static node_t *parse_rule(context_t *ctx) {
     n_r = create_node(NODE_RULE);
     n_r->data.rule.expr = parse_expression(ctx, n_r);
     if (n_r->data.rule.expr == NULL) goto EXCEPTION;
-    if (!match_character(ctx, ';')) goto EXCEPTION;
-    match_spaces(ctx);
+    if (match_character(ctx, ';')) {
+        match_spaces(ctx);
+    }
     assert(q >= p);
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;
