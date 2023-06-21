@@ -2060,12 +2060,16 @@ static node_t *parse_primary(context_t *ctx, node_t *rule) {
         const size_t q = ctx->bufcur;
         size_t r = VOID_VALUE, s = VOID_VALUE;
         match_spaces(ctx);
-        if (match_string(ctx, ":=")) {
+        if (match_character(ctx, '=')) {
             match_spaces(ctx);
             r = ctx->bufcur;
             if (!match_identifier(ctx)) goto EXCEPTION;
             s = ctx->bufcur;
             match_spaces(ctx);
+        }
+        else if ((q-p) > 1 || ctx->buffer.buf[p] != '_') {
+            r = p;
+            s = q;
         }
         if (match_character(ctx, ':')) goto EXCEPTION;
         n_p = create_node(NODE_REFERENCE);
@@ -2394,6 +2398,7 @@ static node_t *parse_rule(context_t *ctx) {
     n_r->data.rule.expr = parse_expression(ctx, n_r);
     if (n_r->data.rule.expr == NULL) goto EXCEPTION;
     if (!match_character(ctx, ';')) goto EXCEPTION;
+    match_spaces(ctx);
     assert(q >= p);
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;

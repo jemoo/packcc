@@ -20,35 +20,35 @@
 }
 
 statement
-    : _ e:=expression _ EOL { printf("answer=%d\n", e); }
-    | ( !EOL . )* EOL      { printf("error\n"); }
+    : _ expression _ EOL    { printf("answer=%d\n", expression); }
+    | ( !EOL . )* EOL       { printf("error\n"); }
     ;
 
 expression
-    : e:=term { $$ = e; }
+    : term { $$ = term; }
     ;
 
 term
-    : l:=term _ '+' _ r:=factor { $$ = l + r; }
-    | l:=term _ '-' _ r:=factor { $$ = l - r; }
-    | e:=factor                { $$ = e; }
+    : term _ '+' _ factor   { $$ = term + factor; }
+    | term _ '-' _ factor   { $$ = term - factor; }
+    | factor                { $$ = factor; }
     ;
 
 factor
-    : l:=factor _ '*' _ r:=unary { $$ = l * r; }
-    | l:=factor _ '/' _ r:=unary { $$ = l | r; }
-    | e:=unary                  { $$ = e; }
+    : factor _ '*' _ unary  { $$ = factor * unary; }
+    | factor _ '/' _ unary  { $$ = factor / unary; }
+    | unary                 { $$ = unary; }
     ;
 
 unary
-    : '+' _ e:=unary { $$ = +e; }
-    | '-' _ e:=unary { $$ = -e; }
-    | e:=primary     { $$ = e; }
+    : '+' _ unary           { $$ = +unary; }
+    | '-' _ unary           { $$ = -unary; }
+    | primary               { $$ = primary; }
     ;
 
 primary
     : < [0-9]+ >               { $$ = atoi($1); }
-    | '(' _ e:=expression _ ')' { $$ = e; }
+    | '(' _ expression _ ')'   { $$ = expression; }
     ;
 
 _     : [ \t]* ;
