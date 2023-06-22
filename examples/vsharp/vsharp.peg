@@ -1,111 +1,333 @@
-# This code is hereby placed in the public domain.
-#
-# THIS SOFTWARE IS PROVIDED BY THE AUTHORS ''AS IS'' AND ANY EXPRESS
-# OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE
-# LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
-# CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
-# SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
-# BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
-# OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-# EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
 %prefix "vsharp"
+
+%auxil "vsparser_t *"
+
+%header {
+#include "vsparser.h"
+
+}
 
 %source {
 #include <stdio.h>
 #include <stdlib.h>
 
-static const char *dbg_str[] = { "EvaluatingRule", "MatchedRule", "AbandoningRule" };
-void vs_debug(int event, const char* rule, int level, size_t pos, const char* buffer, int length);
-#define PCC_DEBUG(auxil, event, rule, level, pos, buffer, length) vs_debug(event, rule, (int)level, pos, buffer, (int)length)
+int vsp_getchar(vsparser_t* p);
+void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
+void vsp_error(vsparser_t *p);
 
-int vs_getchar();
-#define PCC_GETCHAR(auxil)  vs_getchar()
+#define PCC_GETCHAR(auxil)\
+        vsp_getchar(auxil)
+
+#define PCC_DEBUG(auxil, event, rule, level, pos, buffer, length)\
+        vsp_debug(auxil, event, rule, (int)level, pos, buffer, (int)length)
+
+#define PCC_ERROR(auxil)\
+        vsp_error(auxil)
+
+#define PCC_INVOKE(callback, ...)\
+    if (auxil->listener && auxil->listener->callback)\
+        auxil->listener->callback(auxil->listener->udata, ##__VA_ARGS__)
+
+#define VPOS(num)\
+    vsp_pos(_##num##s, _##num##e)
+
+#define EMPTY(num)\
+    (!_##num##e && !_##num##s)
 }
 
 compilation_unit
-    : _ end_of_file
+    : _ (top_level_declaration _)* EOF
     ;
 
-#top_level_declaration
-#    : import_declaration
-#    ;
-
-#import_declaration
-#    : 'import'
-#    ;
-
-_     : ( space | end_of_line | comment )*
-
-space
-    : [ \u0009\u000B\u000C]
+top_level_declaration
+    : module_clause
+    | import_declaration
+    | type_declaration
+    | struct_declaration
+    | field_declaration
+    | function_declaration
     ;
 
-end_of_line
-    : '\n' | '\r\n' | '\r'
+module_clause
+    : ( attribute_list _ )?
+        <KW_MODULE> _ <module_identifier>               { PCC_INVOKE(on_module_clause, VPOS(1), VPOS(2)); }
     ;
 
-comment
-    : single_line_comment
-    | delimited_comment
+module_identifier
+    : identifier
     ;
 
-single_line_comment
-    : '//' ( !end_of_line . )*
+attribute_list
+    : attribute_list _ attribute_declaration
+    | attribute_declaration
     ;
 
-delimited_comment
-    : '/*' ( !'*/' . )* '*/'
+attribute_declaration
+    : '[' _ attribute_spec_list _ ']'
     ;
 
-end_of_file
-    : !.
+attribute_spec_list
+    : attribute_spec_list _ ',' _ attribute_spec
+    | attribute_spec
     ;
+
+attribute_spec
+    : KW_IF _ identifier ( _ '?' )?
+    | ( KW_UNSAFE | identifier ) ( _ ':' _ ( string_literal | identifier ) )?
+    | interpreted_string_literal
+    ;
+
+interpreted_string_literal
+    : string_literal
+    ;
+
+import_declaration
+    : <KW_IMPORT> _ <module_name>                       { PCC_INVOKE(enter_import_declaration, VPOS(1), VPOS(2)); }
+      ( _ ( <KW_AS> _ <identifier>                      { PCC_INVOKE(on_import_alias, VPOS(3), VPOS(4)); }
+      | '{' _ import_symbol_list _ '}' ) )?             { PCC_INVOKE(exit_import_declaration); }
+    ;
+
+module_name
+    : module_name '.' identifier
+    | identifier
+    ;
+
+import_symbol_list
+    : import_symbol_list _ ',' _ <identifier>           { PCC_INVOKE(on_import_symbol, VPOS(1)); }
+    | identifier                                        { PCC_INVOKE(on_import_symbol, VPOS(0)); }
+    ;
+
+type_declaration
+    : ( attribute_list _ )? ( KW_PUBLIC _ )?
+        <KW_TYPE> _ <type_identifier>                   { PCC_INVOKE(enter_type_declaration, VPOS(1), VPOS(2)); }
+        ( _ <type_parameters> )?                        { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
+        _ '=' _ <sum_type_list>                         { PCC_INVOKE(exit_type_declaration, VPOS(4)); }
+    ;
+
+sum_type_list
+    : sum_type_list _ '|' _ type
+    | type
+    ;
+
+struct_declaration
+    : ( attribute_list _ )? ( KW_PUBLIC _ )?
+        < KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM >
+        _ <identifier>                                  { PCC_INVOKE(enter_struct_declaration, VPOS(1), VPOS(2)); }
+        < type_parameters _ >?                          { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
+        ( _ ':' _ <super_type_list> )? _                { if (!EMPTY(4)) { PCC_INVOKE(on_super_type_list, VPOS(4)); } }
+        '{' _ ( struct_member_list _ )? '}'             { PCC_INVOKE(exit_struct_declaration); }
+    ;
+
+type_parameters
+    : '<' _ type_parameter_list _ '>'
+    ;
+
+type_parameter_list
+    : type_parameter_list _ ',' _ <type_parameter>      #{ PCC_INVOKE(on_type_parameter, VPOS(1)); }
+    | type_parameter                                    #{ PCC_INVOKE(on_type_parameter, VPOS(0)); }
+    ;
+
+type_parameter
+    : type
+    ;
+
+type
+    : simple_type ( _ '&' )? ( _ '?' )?
+    ;
+
+super_type_list
+    : super_type_list _ ',' _ super_type
+    | super_type
+    ;
+
+super_type
+    : generic_type
+    | qualified_type
+    | type_identifier
+    ;
+
+simple_type
+    : pointer_type
+    | function_type
+    | tuple_type
+    | generic_type
+    | qualified_type
+    | type_identifier
+    ;
+
+qualified_type
+    : type_identifier _ '.' _ type_identifier
+    ;
+
+type_identifier
+    : identifier
+    ;
+
+pointer_type
+    : simple_type _ '*'
+    ;
+
+function_type
+    : KW_FUNCTION _ function_signature
+    ;
+
+tuple_type
+    : '(' _ type_list _ ')'
+    ;
+
+type_list
+    : type_list _ ',' _ type
+    | type
+    ;
+
+generic_type
+    : ( qualified_type | type_identifier ) _ type_parameters
+    ;
+
+struct_member_list
+    : struct_member_list _ struct_member_declaration
+    | struct_member_declaration
+    ;
+
+struct_member_declaration
+    : field_declaration
+    | function_declaration
+    ;
+
+field_declaration
+    : ( attribute_list _ )? ( KW_PUBLIC _ )?
+        < KW_CONST | KW_LET | KW_VAR > _                { PCC_INVOKE(enter_field_declaration, VPOS(1)); }
+        ( field_specifier_list | field_specifier )      { PCC_INVOKE(exit_field_declaration); }
+    | ( attribute_list _ )? ( KW_PUBLIC _ )?            { PCC_INVOKE(enter_field_declaration, vsp_pos(0, 0)); }
+        field_specifier                                 { PCC_INVOKE(exit_field_declaration); }
+    ;
+
+field_specifier_list
+    : '{' _ ( field_specifier _ )* '}'
+
+field_specifier
+    : <field_identifier> _ ':' _ <type> ( _ '=' _ <expression> )?
+                                                        { PCC_INVOKE(on_field_specifier, VPOS(1), VPOS(2), VPOS(3)); }
+    ;
+
+field_identifier
+    : identifier
+    ;
+
+function_declaration
+    : ( attribute_list _ )? ( KW_PUBLIC _ )? ( KW_CONST _ )? 
+        ( <KW_FUNCTION> _ )? <identifier> _             { PCC_INVOKE(enter_function_declaration, VPOS(1), VPOS(2)); }
+        ( <type_parameters> _ )?                        { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
+        <function_signature>                            { PCC_INVOKE(on_function_signature, VPOS(4)); }
+        ( _ block )?                                    { PCC_INVOKE(exit_function_declaration); }
+    ;
+
+function_signature
+    : '(' _ ( parameter_list _ )? ')' ( _ ':' _ type )?
+    ;
+
+parameter_list
+    : parameter_list _ ',' _ parameter_declaration
+    | parameter_declaration
+    ;
+
+parameter_declaration
+    : ( KW_CONST _ )? identifier _ ':' _ parameter_type
+    ;
+
+parameter_type
+    : type ( _ '...' )?
+    ;
+
+# -------------------- Statements ------------------------------
+
+block
+    : '{' _ ( statement_list _ )? '}'
+    ;
+
+statement_list
+    : statement_list _ statement
+    | statement
+    ;
+
+statement
+    : expression_statement
+    ;
+
+expression_statement
+    : expression
+    ;
+
+# -------------------- Expressions ------------------------------
+
+expression
+    : identifier
+    | string_literal
+    | integer_literal
+    | boolean_literal
+    | KW_NULL
+    | KW_THIS
+    | KW_BASE
+    ;
+
+identifier
+    : basic_identifier
+    | '@' KEYWORDS
+    ;
+
+basic_identifier
+    : LETTER LD*
+    ;
+
+string_literal
+    : STRING_LITERAL
+    ;
+
+integer_literal
+    : INTEGER_LITERAL
+    ;
+
+boolean_literal
+    : KW_TRUE
+    | KW_FALSE
+    ;
+
+KW_MODULE       : 'module'          !LD
+KW_IMPORT       : 'import'          !LD
+KW_AS           : 'as'              !LD
+KW_IF           : 'if'              !LD
+KW_UNSAFE       : 'unsafe'          !LD
+KW_PUBLIC       : 'public'          !LD
+KW_STRUCT       : 'struct'          !LD
+KW_UNION        : 'union'           !LD
+KW_CLASS        : 'class'           !LD
+KW_INTERFACE    : 'interface'       !LD
+KW_ENUM         : 'enum'            !LD
+KW_FUNCTION     : 'function'        !LD
+KW_TYPE         : 'type'            !LD
+KW_CONST        : 'const'           !LD
+KW_LET          : 'let'             !LD
+KW_VAR          : 'var'             !LD
+KW_TRUE         : 'true'            !LD
+KW_FALSE        : 'false'           !LD
+KW_NULL         : 'null'            !LD
+KW_THIS         : 'this'            !LD
+KW_BASE         : 'base'            !LD
+
+KEYWORDS        : KW_MODULE | KW_IMPORT | KW_AS
+
+LETTER          : [a-zA-Zα-ωΑ-Ωµ_]
+DIGIT           : [0-9]
+LD              : LETTER | DIGIT
+
+STRING_LITERAL  : '\"' ( !'\"' . )* '\"'
+INTEGER_LITERAL : [0-9]+
+
+_               : (SPACE | EOL | COMMENT)*
+SPACE           : [ \u0009\u000B\u000C]
+COMMENT         : '//' ( !EOL . )*
+                | '/*' ( !'*/' . )* '*/'
+EOL             : '\n' | '\r\n' | '\r'
+EOF             : !.
 
 %%
-char* g_text = NULL;
-long g_length = 0;
-long g_readpos = 0;
-
-int vs_readfile(const char* filename) {
-    FILE* textfile;
-    textfile = fopen(filename, "r");
-    if (textfile == NULL)
-        return 1;
-
-    fseek(textfile, 0L, SEEK_END);
-    g_length = ftell(textfile);
-    fseek(textfile, 0L, SEEK_SET);
-
-    g_text = (char*)calloc(g_length, sizeof(char));
-    if (g_text == NULL)
-        return 1;
-
-    fread(g_text, sizeof(char), g_length, textfile);
-    fclose(textfile);
-    return 0;
-}
-
-int vs_getchar() {
-    if (!g_text || g_readpos >= g_length)
-        return -1;
-    int ch = g_text[g_readpos++];
-    return ch;
-}
-
-void vs_debug(int event, const char* rule, int level, size_t pos, const char* buffer, int length) {
-    fprintf(stderr, "%*s%s %s @%zu [%.*s]\n", level*2, "", dbg_str[event], rule, pos, length, buffer);
-}
-
-int main() {
-    if (vs_readfile("./vsharp.vs") != 0)
-        return 1;
-
-    vsharp_context_t *ctx = vsharp_create(NULL);
-    while (vsharp_parse(ctx, NULL));
-    vsharp_destroy(ctx);
-    return 0;
-}
