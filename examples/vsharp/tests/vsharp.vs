@@ -7,9 +7,9 @@ module ModuleName
     delimited_comment
 */   
 
-import ModuleName
-import ModuleName.SubModuleName as ModuleAliasName
-import ModuleName.SubModuleName { SymbolName, SymbolName, SymbolName, SymbolName }
+import strconv
+import v.ast as ModuleAliasName
+import readline { Readline }
 
 public struct StructName {
     var Field1: int

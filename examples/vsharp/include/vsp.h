@@ -8,15 +8,26 @@ extern "C" {
     typedef struct vsp_pos_t {
         int start;
         int end;
+        int line;
+        int col;
     }
     vsp_pos_t;
+
+    typedef struct vsp_strv_t {
+        const char* buf;
+        int len;
+    }
+    vsp_strv_t;
 
     typedef struct vsp_listener_t {
         void* udata;
 
         void (*on_module_clause)(void* udata, vsp_pos_t module_pos, vsp_pos_t name_pos);
 
-        void (*enter_import_declaration)(void* udata, vsp_pos_t import_pos, vsp_pos_t module_pos);
+        void (*on_import_declaration)(void* udata, vsp_pos_t import_pos, vsp_pos_t mod_pos, vsp_strv_t mod_name, vsp_pos_t as_pos, vsp_pos_t alias_pos, const vsp_pos_t* p_syms, int n_syms);
+
+        void (*enter_import_declaration)(void* udata, vsp_pos_t import_pos, vsp_pos_t mod_pos);
+        void (*on_import_module_name)(void* udata, vsp_pos_t name_pos, int dot);
         void (*on_import_alias)(void* udata, vsp_pos_t as_pos, vsp_pos_t alias_pos);
         void (*on_import_symbol)(void* udata, vsp_pos_t symbol_pos);
         void (*exit_import_declaration)(void* udata);

@@ -8,15 +8,12 @@ extern "C" {
 #endif
 
     typedef struct vsparser_t {
-        const char* src;
-        size_t len;
-        size_t rp;
-        vsp_listener_t* listener;
-        int indent;
+        vsp_listener_t il;
+        vsp_listener_t* el;
     }
     vsparser_t;
 
-    vsp_pos_t vsp_pos(size_t start, size_t end);
+    vsp_pos_t vsp_pos(vsparser_t* p, size_t start, size_t end);
 
 #ifdef __cplusplus
 }

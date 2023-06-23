@@ -25,11 +25,14 @@ void vsp_error(vsparser_t *p);
         vsp_error(auxil)
 
 #define PCC_INVOKE(callback, ...)\
-    if (auxil->listener && auxil->listener->callback)\
-        auxil->listener->callback(auxil->listener->udata, ##__VA_ARGS__)
+    if (auxil->il.callback)\
+        auxil->il.callback(auxil, ##__VA_ARGS__)
 
 #define VPOS(num)\
-    vsp_pos(_##num##s, _##num##e)
+    vsp_pos(auxil, _##num##s, _##num##e)
+
+#define NPOS()\
+    vsp_pos(auxil, 0, 0)
 
 #define EMPTY(num)\
     (!_##num##e && !_##num##s)
@@ -88,8 +91,8 @@ import_declaration
     ;
 
 module_name
-    : module_name '.' identifier
-    | identifier
+    : module_name _ '.' _ <identifier>                  { PCC_INVOKE(on_import_module_name, VPOS(1), 1); }
+    | identifier                                        { PCC_INVOKE(on_import_module_name, VPOS(0), 0); }
     ;
 
 import_symbol_list
@@ -198,7 +201,7 @@ field_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )?
         < KW_CONST | KW_LET | KW_VAR > _                { PCC_INVOKE(enter_field_declaration, VPOS(1)); }
         ( field_specifier_list | field_specifier )      { PCC_INVOKE(exit_field_declaration); }
-    | ( attribute_list _ )? ( KW_PUBLIC _ )?            { PCC_INVOKE(enter_field_declaration, vsp_pos(0, 0)); }
+    | ( attribute_list _ )? ( KW_PUBLIC _ )?            { PCC_INVOKE(enter_field_declaration, NPOS()); }
         field_specifier                                 { PCC_INVOKE(exit_field_declaration); }
     ;
 
@@ -331,3 +334,5 @@ EOL             : '\n' | '\r\n' | '\r'
 EOF             : !.
 
 %%
+
+#undef PCC_INVOKE
