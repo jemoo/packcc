@@ -6,3 +6,7 @@
 /build/msvc/**/x64/
 /build/msvc/**/.vs/
 /benchmark/tmp/
+
+examples/vsharp/_build/
+examples/vsharp/lib/
+examples/vsharp/tests/

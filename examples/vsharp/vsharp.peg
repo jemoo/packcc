@@ -1,13 +1,16 @@
 %prefix "vsharp"
 
+%value "vsp_pos_t"
 %auxil "vsparser_t *"
 
 %header {
+
 #include "vsparser.h"
 
 }
 
 %source {
+
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,11 +34,20 @@ void vsp_error(vsparser_t *p);
 #define VPOS(num)\
     vsp_pos(auxil, _##num##s, _##num##e)
 
+#define VRANGE(start, end)\
+    vsp_pos(auxil, _##start##s, _##end##e)
+
 #define NPOS()\
     vsp_pos(auxil, 0, 0)
 
 #define EMPTY(num)\
-    (!_##num##e && !_##num##s)
+    (_##num##e <= _##num##s)
+
+#ifndef TRUE
+#define TRUE    1
+#define FALSE   0
+#endif
+
 }
 
 compilation_unit
@@ -91,8 +103,8 @@ import_declaration
     ;
 
 module_name
-    : module_name _ '.' _ <identifier>                  { PCC_INVOKE(on_import_module_name, VPOS(1), 1); }
-    | identifier                                        { PCC_INVOKE(on_import_module_name, VPOS(0), 0); }
+    : module_name _ '.' _ <identifier>                  { PCC_INVOKE(on_import_module_name, VPOS(1), TRUE); }
+    | identifier                                        { PCC_INVOKE(on_import_module_name, VPOS(0), FALSE); }
     ;
 
 import_symbol_list
@@ -103,7 +115,7 @@ import_symbol_list
 type_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )?
         <KW_TYPE> _ <type_identifier>                   { PCC_INVOKE(enter_type_declaration, VPOS(1), VPOS(2)); }
-        ( _ <type_parameters> )?                        { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
+        ( _ <generic_names> )?                          { if (!EMPTY(3)) { PCC_INVOKE(on_type_decl_generic_names, VPOS(3)); } }
         _ '=' _ <sum_type_list>                         { PCC_INVOKE(exit_type_declaration, VPOS(4)); }
     ;
 
@@ -116,37 +128,52 @@ struct_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )?
         < KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM >
         _ <identifier>                                  { PCC_INVOKE(enter_struct_declaration, VPOS(1), VPOS(2)); }
-        < type_parameters _ >?                          { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
-        ( _ ':' _ <super_type_list> )? _                { if (!EMPTY(4)) { PCC_INVOKE(on_super_type_list, VPOS(4)); } }
-        '{' _ ( struct_member_list _ )? '}'             { PCC_INVOKE(exit_struct_declaration); }
+        ( _ <generic_names> )?                          { if (!EMPTY(3)) { PCC_INVOKE(on_struct_generic_names, VPOS(3)); } }
+        ( _ ':' _ super_type_list )?
+        _ '{' _ ( struct_member_list _ )? '}'           { PCC_INVOKE(exit_struct_declaration, VPOS(0)); }
     ;
 
-type_parameters
-    : '<' _ type_parameter_list _ '>'
+generic_names
+    : '<' _ generic_name_list _ '>'                     { $$=VPOS(0); }
     ;
 
-type_parameter_list
-    : type_parameter_list _ ',' _ <type_parameter>      #{ PCC_INVOKE(on_type_parameter, VPOS(1)); }
-    | type_parameter                                    #{ PCC_INVOKE(on_type_parameter, VPOS(0)); }
+generic_name_list
+    : generic_name_list _ ',' _ <generic_name>          { PCC_INVOKE(on_generic_name, VPOS(1)); }
+    | generic_name                                      { PCC_INVOKE(on_generic_name, VPOS(0)); }
     ;
 
-type_parameter
-    : type
+generic_name
+    : identifier
     ;
 
 type
-    : simple_type ( _ '&' )? ( _ '?' )?
+    : simple_type ( _ <'&'> )? ( _ <'?'> )?             { $$=VPOS(0);
+                                                          PCC_INVOKE(on_type_reference, VPOS(0), VPOS(1));
+                                                          PCC_INVOKE(on_type_nullable, VPOS(0), VPOS(2)); }
     ;
 
 super_type_list
-    : super_type_list _ ',' _ super_type
-    | super_type
+    : super_type_list _ ',' _ super_type                { PCC_INVOKE(on_struct_super_type, TRUE); }
+    | super_type                                        { PCC_INVOKE(on_struct_super_type, FALSE); }
     ;
 
 super_type
     : generic_type
     | qualified_type
     | type_identifier
+    ;
+
+generic_type
+    : ( qualified_type | type_identifier )              { PCC_INVOKE(enter_generic_type); }
+        _ '<' _ type_list _ '>'                         { PCC_INVOKE(exit_generic_type); }
+    ;
+
+qualified_type
+    : <type_identifier> _ '.' _ <type_identifier>       { PCC_INVOKE(on_named_type, VPOS(1), VPOS(2)); }
+    ;
+
+type_identifier
+    : identifier                                        { PCC_INVOKE(on_named_type, NPOS(), VPOS(0)); }
     ;
 
 simple_type
@@ -158,33 +185,28 @@ simple_type
     | type_identifier
     ;
 
-qualified_type
-    : type_identifier _ '.' _ type_identifier
-    ;
-
-type_identifier
-    : identifier
-    ;
-
 pointer_type
-    : simple_type _ '*'
+    : simple_type _ <'*'>                               { PCC_INVOKE(on_type_pointer, VPOS(0), VPOS(1)); }
     ;
 
 function_type
-    : KW_FUNCTION _ function_signature
+    : KW_FUNCTION                                       { PCC_INVOKE(enter_function_type); }
+        _ function_type_signature                       { PCC_INVOKE(exit_function_type, VPOS(0)); }
+    ;
+
+function_type_signature
+    : '(' _ ( type_list _ )? ')'                        { PCC_INVOKE(on_function_type_parameters); }
+        ( _ ':' _ type )?                               { PCC_INVOKE(on_function_type_return_type, type); }
     ;
 
 tuple_type
-    : '(' _ type_list _ ')'
+    :                                                   { PCC_INVOKE(enter_tuple_type); }
+        '(' _ type_list _ ')'                           { PCC_INVOKE(exit_tuple_type, VPOS(0)); }
     ;
 
 type_list
-    : type_list _ ',' _ type
-    | type
-    ;
-
-generic_type
-    : ( qualified_type | type_identifier ) _ type_parameters
+    : type_list _ ',' _ type                            { PCC_INVOKE(on_type_list_item, TRUE); }
+    | type                                              { PCC_INVOKE(on_type_list_item, FALSE); }
     ;
 
 struct_member_list
@@ -210,7 +232,7 @@ field_specifier_list
 
 field_specifier
     : <field_identifier> _ ':' _ <type> ( _ '=' _ <expression> )?
-                                                        { PCC_INVOKE(on_field_specifier, VPOS(1), VPOS(2), VPOS(3)); }
+                                                        { PCC_INVOKE(on_field_specifier, VPOS(0), VPOS(1), VPOS(2), VPOS(3)); }
     ;
 
 field_identifier
@@ -219,14 +241,14 @@ field_identifier
 
 function_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )? ( KW_CONST _ )? 
-        ( <KW_FUNCTION> _ )? <identifier> _             { PCC_INVOKE(enter_function_declaration, VPOS(1), VPOS(2)); }
-        ( <type_parameters> _ )?                        { if (!EMPTY(3)) { PCC_INVOKE(on_type_parameters, VPOS(3)); } }
-        <function_signature>                            { PCC_INVOKE(on_function_signature, VPOS(4)); }
-        ( _ block )?                                    { PCC_INVOKE(exit_function_declaration); }
+        < ( KW_FUNCTION _ )? identifier _ ( generic_names _ )?
+                                                        { PCC_INVOKE(enter_function_declaration, KW_CONST, KW_FUNCTION, identifier, generic_names); }
+        function_signature > ( _ block )?               { PCC_INVOKE(exit_function_declaration, VPOS(1)); }
     ;
 
 function_signature
-    : '(' _ ( parameter_list _ )? ')' ( _ ':' _ type )?
+    : '(' _ ( parameter_list _ )? ')'
+        ( _ ':' _ type )?                               { $$=VPOS(0); PCC_INVOKE(on_function_signature, VPOS(0), type); }
     ;
 
 parameter_list
@@ -235,11 +257,12 @@ parameter_list
     ;
 
 parameter_declaration
-    : ( KW_CONST _ )? identifier _ ':' _ parameter_type
+    : ( KW_CONST _ )? identifier
+        _ ':' _ parameter_type                          { $$=VPOS(0); PCC_INVOKE(on_function_parameter, VPOS(0), KW_CONST, identifier, parameter_type); }
     ;
 
 parameter_type
-    : type ( _ '...' )?
+    : type ( _ '...' )?                                 { $$=VPOS(0); }
     ;
 
 # -------------------- Statements ------------------------------
@@ -274,8 +297,8 @@ expression
     ;
 
 identifier
-    : basic_identifier
-    | '@' KEYWORDS
+    : basic_identifier                                  { $$=VPOS(0); }
+    | '@' KEYWORDS                                      { $$=VPOS(0); }
     ;
 
 basic_identifier
@@ -306,9 +329,9 @@ KW_UNION        : 'union'           !LD
 KW_CLASS        : 'class'           !LD
 KW_INTERFACE    : 'interface'       !LD
 KW_ENUM         : 'enum'            !LD
-KW_FUNCTION     : 'function'        !LD
-KW_TYPE         : 'type'            !LD
-KW_CONST        : 'const'           !LD
+KW_FUNCTION     : 'function'        !LD                 { $$=VPOS(0); }
+KW_TYPE         : 'type'            !LD                 { $$=VPOS(0); }
+KW_CONST        : 'const'           !LD                 { $$=VPOS(0); }
 KW_LET          : 'let'             !LD
 KW_VAR          : 'var'             !LD
 KW_TRUE         : 'true'            !LD

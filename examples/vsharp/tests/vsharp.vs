@@ -8,35 +8,41 @@ module ModuleName
 */   
 
 import strconv
-import v.ast as ModuleAliasName
+import v.ast as Ast
 import readline { Readline }
 
-public struct StructName {
+public struct BaseType {
     var Field1: int
-    let Field2: int = 0
+    let Field2: int& = 0
+}
 
+//Map<List<Map<int, Array<float>>>, Map<string, int>>
+public struct DeriveType : Ast.File, BaseType {
     public const {
         Field3: int = 1
         Field4: string = "abc"
-        Field5: bool = true
+        Field5: bool? = true
+        Field6: float& = 0
     }
 
-    [if debug]
-    DebugMethod() {
+    DebugMethod<TValue>(value: TValue?) {
     }
 
     [inline]
-    public InlineMethod() {
+    public InlineMethod(const value: double&) {
     }
 
-    const ConstMethod() {
+    const ConstMethod(value: bool&) {
     }
 }
 
-class ClassName<TypeParam1, TypeParam2, TypeParam3> {
+class GenericClass<TypeParam1, TypeParam2, TypeParam3> {
+    Field1: TypeParam1
+    Field2: TypeParam2
+    Field3: TypeParam3
 }
 
-class ChildClass : ModuleName.ClassName<int, float, bool> {
+class ChildClass : GenericClass<int, float, bool> {
 }
 
 union UnionName {
@@ -58,6 +64,7 @@ interface Iterator<T> {
 enum EnumName {
 }
 
+[if debug]
 [inline]
 [export: C, deprecated, unsafe]
 function GlobalFunction<T>(Param1: int?, Param2: StructName&, const Param3: Array<float*?>** ...): (Map<int, Array<float>>, bool) {

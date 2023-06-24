@@ -9,7 +9,47 @@
 
 using namespace std;
 
-typedef struct vsparserex_t {
+bool IsEmpty(const vsp_pos_t& pos) {
+    return pos.start >= pos.end;
+}
+
+vsp_pos_t operator | (const vsp_pos_t& a, const vsp_pos_t& b) {
+    if (IsEmpty(a)) {
+        return b;
+    }
+    if (IsEmpty(b)) {
+        return a;
+    }
+    return { a.start, b.end, a.line, a.col };
+}
+
+struct VspType {
+    vsp_pos_t pos;
+    vsp_pos_t mod_pos;          // `module`.type
+    vsp_pos_t name_pos;         // module.`type`
+    int type_pointers;          // type`*`
+    vsp_pos_t reference_pos;    // type`&`
+    vsp_pos_t nullable_pos;     // type`?`
+    int is_tuple;
+    int is_generic;
+    int is_function;
+    int return_type;
+    vector<int> type_params;    // is_tuple: `(int, bool)`
+                                // is_generic: module.type`<t>`
+                                // is_function: function `(int, bool)`
+};
+
+struct VspFunc {
+    vsp_pos_t pos;
+    vsp_pos_t const_pos;
+    vsp_pos_t func_pos;
+    vsp_pos_t name_pos;
+    vector<vsp_pos_t> generic_names;
+    vector<vsp_param_t> params;
+    int type;
+};
+
+struct VsParser {
     vsparser_t base;
     const char* src;
     size_t len;
@@ -25,28 +65,74 @@ typedef struct vsparserex_t {
         string mod_name;
         vector<vsp_pos_t> syms;
     } import_decl;
-}
-vsparserex_t;
 
-string vsp_str(vsparserex_t* p, const vsp_pos_t& pos) {
-    if (pos.start < 0)
-        return string();
-    return string(p->src + pos.start, pos.end - pos.start);
-}
+    struct {
+        vsp_pos_t kind_pos;
+        vsp_pos_t name_pos;
+        vector<vsp_pos_t> generic_names;
+        vector<int> supers;
+        vector<vsp_field_t> fields;
+        vector<int> methods;
+    } struct_decl;
+
+    vector<vsp_pos_t> generic_names;        // class Map`<TKey, TValue>`
+    vector<vsp_param_t> param_list;       // function Foo`(A: int, B: int)`
+
+    vector<int> type_stack;
+    vector<VspType> type_specs;
+    int type_spec;
+
+    vsp_pos_t field_kind_pos;
+
+    vector<VspFunc> func_specs;
+    int func_spec;
+
+    bool IsInsideStruct() const {
+        return !IsEmpty(struct_decl.kind_pos);
+    }
+
+    vector<vsp_pos_t> TakeGenericNames() {
+        auto tmp = generic_names;
+        generic_names = {};
+        return tmp;
+    }
+
+    vector<vsp_param_t> TakeFunctionParameters() {
+        auto tmp = param_list;
+        param_list = {};
+        return tmp;
+    }
+
+    string str(const vsp_pos_t& pos) const {
+        if (IsEmpty(pos))
+            return string();
+        return string(src + pos.start, pos.end - pos.start);
+    }
+
+    VspType& AddTypeSpec(const VspType& in_type_spec) {
+        type_spec = (int)type_specs.size();
+        type_specs.push_back(in_type_spec);
+        return type_specs.back();
+    }
+
+    VspType& CurTypeSpec() {
+        return type_specs[type_spec];
+    }
+};
 
 vsp_strv_t vsp_strv(const string& str) {
     return vsp_strv_t{ str.c_str(), (int)str.size() };
 }
 
-vsp_strv_t vsp_strv(vsparserex_t* p, const vsp_pos_t& pos) {
+vsp_strv_t vsp_strv(VsParser* p, const vsp_pos_t& pos) {
     return vsp_strv_t{ p->src+pos.start, pos.end-pos.start };
 }
 
-void vsp_newline(vsparserex_t* p, size_t pos) {
+void vsp_newline(VsParser* p, size_t pos) {
     p->lines.push_back(pos);
 }
 
-void vsp_compute_line_and_column(vsparserex_t* p, size_t pos, int& line, int& col) {
+void vsp_compute_line_and_column(VsParser* p, size_t pos, int& line, int& col) {
     auto n = p->lines.size();
     for (auto i = n; i >= 1; i--) {
         auto line_start = p->lines.at(i - 1);
@@ -60,11 +146,17 @@ void vsp_compute_line_and_column(vsparserex_t* p, size_t pos, int& line, int& co
     col = -1;
 }
 
+void vsp_clear_type_specs(VsParser* p) {
+    p->type_stack.clear();
+    p->type_specs.clear();
+    p->type_spec = 0;
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int vsp_getchar(vsparserex_t* p) {
+int vsp_getchar(VsParser* p) {
     if (!p->src || p->rp >= p->len)
         return -1;
     int ch = p->src[p->rp++];
@@ -87,27 +179,27 @@ int vsp_getchar(vsparserex_t* p) {
 vsp_pos_t vsp_pos(vsparser_t* p, size_t start, size_t end) {
     vsp_pos_t pos;
     if (!p || start >= end) {
-        pos.start = -1;
-        pos.end = -1;
-        pos.line = -1;
-        pos.col = -1;
+        pos.start = 0;
+        pos.end = 0;
+        pos.line = 0;
+        pos.col = 0;
     }
     else {
         pos.start = (int)start;
         pos.end = (int)end;
-        vsp_compute_line_and_column((vsparserex_t*)p, start, pos.line, pos.col);
+        vsp_compute_line_and_column((VsParser*)p, start, pos.line, pos.col);
     }
     return pos;
 }
 
-void vsp_debug(vsparserex_t* p, int event, const char* rule, int level, size_t pos, const char* buffer, int length) {
+void vsp_debug(VsParser* p, int event, const char* rule, int level, size_t pos, const char* buffer, int length) {
 #ifndef VSP_LIB
     //static const char* dbg_str[] = { "Evaluating rule", "Matched rule", "Abandoning rule" };
     //fprintf(stderr, "%*s%s %s @%zu [%.*s]\n", level * 2, "", dbg_str[event], rule, pos, length, buffer);
 #endif
 }
 
-void vsp_error(vsparserex_t* p) {
+void vsp_error(VsParser* p) {
     fprintf(stderr, "Syntax error\n");
 }
 
@@ -117,43 +209,45 @@ void vsp_error(vsparserex_t* p) {
 #define INDENT          p->indent*2, ""
 
 #ifdef VSP_LIB
-#define L_LOG(...)
+#define VSP_LOG(...)
 #else
-#define L_LOG(...)\
+#define VSP_LOG(...)\
     printf(__VA_ARGS__)
 #endif
 
-#define L_INVOKE(callback, ...)\
+#define VSP_INVOKE(callback, ...)\
     if (p->base.el && p->base.el->callback) {\
         p->base.el->callback(p->base.el->udata, ##__VA_ARGS__);\
     }
 
-void on_module_clause(vsparserex_t* p, vsp_pos_t module_pos, vsp_pos_t name_pos) {
-    L_LOG("%*smodule[%d, %d], name[%d, %d]:%.*s\r\n", INDENT, POS(module_pos), PSTR(name_pos));
+void on_module_clause(VsParser* p, vsp_pos_t module_pos, vsp_pos_t name_pos) {
+    VSP_LOG("%*smodule[%d, %d], name[%d, %d]:%.*s\r\n", INDENT, POS(module_pos), PSTR(name_pos));
 }
 
-void enter_import_declaration(vsparserex_t* p, vsp_pos_t import_pos, vsp_pos_t mod_pos) {
-    L_LOG("\r\n");
-    L_LOG("%*simport[%d, %d], module[%d, %d]:%.*s {\r\n", INDENT, POS(import_pos), PSTR(mod_pos));
+#pragma region import_declaration
+
+void enter_import_declaration(VsParser* p, vsp_pos_t import_pos, vsp_pos_t mod_pos) {
+    VSP_LOG("\r\n");
+    VSP_LOG("%*simport[%d, %d], module[%d, %d]:%.*s {\r\n", INDENT, POS(import_pos), PSTR(mod_pos));
     p->indent++;
 
     p->import_decl.import_pos = import_pos;
     p->import_decl.mod_pos = mod_pos;
 }
 
-void exit_import_declaration(vsparserex_t* p) {
+void exit_import_declaration(VsParser* p) {
     auto& import_decl = p->import_decl;
     if (import_decl.mod_name.size()) {
         // case 2
         if (import_decl.syms.size()) {
-            L_INVOKE(on_import_declaration, import_decl.import_pos,
+            VSP_INVOKE(on_import_declaration, import_decl.import_pos,
                 import_decl.mod_pos, vsp_strv(import_decl.mod_name),
                 vsp_pos(nullptr, 0, 0), import_decl.alias_pos, 
                 import_decl.syms.data(), (int)import_decl.syms.size());
         }
         // case 1
         else {
-            L_INVOKE(on_import_declaration, import_decl.import_pos,
+            VSP_INVOKE(on_import_declaration, import_decl.import_pos,
                 import_decl.mod_pos, vsp_strv(import_decl.mod_name),
                 vsp_pos(nullptr, 0, 0), import_decl.alias_pos,
                 nullptr, 0);
@@ -162,28 +256,28 @@ void exit_import_declaration(vsparserex_t* p) {
     }
 
     p->indent--;
-    L_LOG("%*s} //import\r\n", INDENT);
+    VSP_LOG("%*s} //import\r\n", INDENT);
 }
 
-void on_import_module_name(vsparserex_t* p, vsp_pos_t name_pos, int dot) {
+void on_import_module_name(VsParser* p, vsp_pos_t name_pos, int dot) {
     p->import_decl.alias_pos = name_pos;
     if (dot) {
         p->import_decl.mod_name += '.';
-        p->import_decl.mod_name += vsp_str(p, name_pos);
+        p->import_decl.mod_name += p->str(name_pos);
     }
     else {
-        p->import_decl.mod_name = vsp_str(p, name_pos);
+        p->import_decl.mod_name = p->str(name_pos);
     }
 }
 
-void on_import_alias(vsparserex_t* p, vsp_pos_t as_pos, vsp_pos_t alias_pos) {
-    L_LOG("%*sas[%d, %d], alias[%d, %d]:%.*s\r\n", INDENT, POS(as_pos), PSTR(alias_pos));
+void on_import_alias(VsParser* p, vsp_pos_t as_pos, vsp_pos_t alias_pos) {
+    VSP_LOG("%*sas[%d, %d], alias[%d, %d]:%.*s\r\n", INDENT, POS(as_pos), PSTR(alias_pos));
 
     auto& import_decl = p->import_decl;
     import_decl.as_pos = as_pos;
     import_decl.alias_pos = alias_pos;
 
-    L_INVOKE(on_import_declaration, import_decl.import_pos, 
+    VSP_INVOKE(on_import_declaration, import_decl.import_pos, 
         import_decl.mod_pos, vsp_strv(import_decl.mod_name), 
         import_decl.as_pos, import_decl.alias_pos, 
         nullptr, 0);
@@ -191,79 +285,251 @@ void on_import_alias(vsparserex_t* p, vsp_pos_t as_pos, vsp_pos_t alias_pos) {
     import_decl = {};
 }
 
-void on_import_symbol(vsparserex_t* p, vsp_pos_t symbol_pos) {
-    L_LOG("%*ssymbol[%d, %d]:%.*s\r\n", INDENT, PSTR(symbol_pos));
+void on_import_symbol(VsParser* p, vsp_pos_t symbol_pos) {
+    VSP_LOG("%*ssymbol[%d, %d]:%.*s\r\n", INDENT, PSTR(symbol_pos));
 
     auto& import_decl = p->import_decl;
     import_decl.syms.push_back(symbol_pos);
 }
 
-void enter_struct_declaration(vsparserex_t* p, vsp_pos_t struct_pos, vsp_pos_t name_pos) {
-    L_LOG("\r\n");
-    L_LOG("%*sstruct[%d, %d]:%.*s, name[%d, %d]:%.*s {\r\n", INDENT, PSTR(struct_pos), PSTR(name_pos));
+#pragma endregion
+
+#pragma region struct_declaration
+
+void enter_struct_declaration(VsParser* p, vsp_pos_t kind_pos, vsp_pos_t name_pos) {
+    VSP_LOG("\r\n");
+    VSP_LOG("%*sstruct[%d, %d]:%.*s, name[%d, %d]:%.*s {\r\n", INDENT, PSTR(kind_pos), PSTR(name_pos));
+    p->indent++;
+
+    auto& struct_decl = p->struct_decl;
+    struct_decl.kind_pos = kind_pos;
+    struct_decl.name_pos = name_pos;
+}
+
+void exit_struct_declaration(VsParser* p, vsp_pos_t pos) {
+    auto& struct_decl = p->struct_decl;
+    VSP_INVOKE(on_struct_declaration, 
+        pos, struct_decl.kind_pos, struct_decl.name_pos,
+        struct_decl.generic_names.data(), (int)struct_decl.generic_names.size(),
+        struct_decl.supers.data(), (int)struct_decl.supers.size(),
+        struct_decl.fields.data(), (int)struct_decl.fields.size(),
+        struct_decl.methods.data(), (int)struct_decl.methods.size());
+    p->struct_decl = {};
+    vsp_clear_type_specs(p);
+
+    p->indent--;
+    VSP_LOG("%*s} //struct\r\n", INDENT);
+}
+
+void on_generic_name(VsParser* p, vsp_pos_t type_param_pos) {
+    VSP_LOG("%*stype_param[%d, %d]:%.*s\r\n", INDENT, PSTR(type_param_pos));
+
+    p->generic_names.push_back(type_param_pos);
+}
+
+void on_struct_generic_names(VsParser* p, vsp_pos_t generic_names_pos) {
+    VSP_LOG("%*sgeneric_names[%d, %d]:%.*s\r\n", INDENT, PSTR(generic_names_pos));
+
+    p->struct_decl.generic_names = p->TakeGenericNames();
+}
+
+void on_struct_super_type(VsParser* p, int comma) {
+    if (!comma) {
+        p->struct_decl.supers = {};
+    }
+    p->struct_decl.supers.push_back(p->type_spec);
+}
+
+#pragma endregion
+
+#pragma region type
+
+void on_named_type(VsParser* p, vsp_pos_t mod_pos, vsp_pos_t type_pos) {
+
+    if (IsEmpty(mod_pos)) {
+        VSP_LOG("%*stype_spec[%d, %d]:%.*s\r\n", INDENT, PSTR(type_pos));
+    }
+    else {
+        VSP_LOG("%*stype_spec[%d, %d]:%.*s.%.*s\r\n", INDENT, POS(type_pos), STR(mod_pos), STR(type_pos));
+    }
+
+    p->AddTypeSpec({ mod_pos | type_pos, mod_pos, type_pos });
+}
+
+void on_type_pointer(VsParser* p, vsp_pos_t pos, vsp_pos_t sym_pos) {
+    if (p->type_spec >= 0) {
+        auto& type_sepc = p->CurTypeSpec();
+        type_sepc.type_pointers++;
+        type_sepc.pos = pos;
+    }
+}
+
+void on_type_reference(VsParser* p, vsp_pos_t pos, vsp_pos_t sym_pos) {
+    if (p->type_spec >= 0) {
+        auto& type_sepc = p->CurTypeSpec();
+        type_sepc.pos = pos;
+        type_sepc.reference_pos = sym_pos;
+        if (!IsEmpty(sym_pos))
+            type_sepc.type_pointers++;
+    }
+}
+
+void on_type_nullable(VsParser* p, vsp_pos_t pos, vsp_pos_t sym_pos) {
+    if (p->type_spec >= 0) {
+        auto& type_sepc = p->CurTypeSpec();
+        type_sepc.pos = pos;
+        type_sepc.nullable_pos = sym_pos;
+    }
+}
+
+void enter_type_list(VsParser* p) {
+    p->type_stack.push_back(p->type_spec);
+}
+
+void on_type_list_item(VsParser* p, int comma) {
+    int list = p->type_stack.back();
+    int item = p->type_spec;
+    p->type_specs[list].type_params.push_back(item);
+}
+
+void exit_type_list(VsParser* p) {
+    p->type_spec = p->type_stack.back();
+    p->type_stack.pop_back();
+}
+
+void enter_generic_type(VsParser* p) {
+    auto& type_sepc = p->CurTypeSpec();
+    type_sepc.is_generic = true;
+    enter_type_list(p);
+}
+
+void exit_generic_type(VsParser* p) {
+    exit_type_list(p);
+}
+
+void enter_tuple_type(VsParser* p) {
+    p->AddTypeSpec({});
+    enter_type_list(p);
+}
+
+void exit_tuple_type(VsParser* p, vsp_pos_t pos) {
+    exit_type_list(p);
+    auto& type_sepc = p->CurTypeSpec();
+    type_sepc.is_tuple = true;
+    type_sepc.pos = pos;
+}
+
+void enter_function_type(VsParser* p) {
+    VspType type_spec = {};
+    type_spec.is_function = true;
+    type_spec.return_type = -1;
+    p->AddTypeSpec(type_spec);
+    enter_type_list(p);
+}
+
+void on_function_type_parameters(VsParser* p) {
+    exit_type_list(p);
+}
+
+void on_function_type_return_type(VsParser* p, vsp_pos_t return_type_pos) {
+    if (!IsEmpty(return_type_pos)) {
+        auto& type_sepc = p->CurTypeSpec();
+        type_sepc.return_type = p->type_spec;
+    }
+}
+
+void exit_function_type(VsParser* p, vsp_pos_t pos) {
+    auto& type_sepc = p->CurTypeSpec();
+    type_sepc.pos = pos;
+}
+
+#pragma endregion
+
+#pragma region field_declaration
+
+void enter_field_declaration(VsParser* p, vsp_pos_t kind_pos) {
+    VSP_LOG("\r\n");
+    VSP_LOG("%*sfield[%d, %d]:%.*s {\r\n", INDENT, PSTR(kind_pos));
+    p->indent++;
+
+    p->field_kind_pos = kind_pos;
+}
+
+void exit_field_declaration(VsParser* p) {
+    p->indent--;
+    VSP_LOG("%*s} //field\r\n", INDENT);
+}
+
+void on_field_specifier(VsParser* p, vsp_pos_t pos, vsp_pos_t name_pos, vsp_pos_t type_pos, vsp_pos_t init_pos) {
+    VSP_LOG("%*sname[%d, %d]:%.*s, type[%d, %d]:%.*s, init[%d, %d]:%.*s\r\n", INDENT, PSTR(name_pos), PSTR(type_pos), PSTR(init_pos));
+
+    auto field_decl = vsp_field_t{
+        pos,
+        p->field_kind_pos,
+        name_pos,
+        p->type_spec
+    };
+
+    p->struct_decl.fields.push_back(field_decl);
+}
+
+#pragma endregion
+
+#pragma region function_declaration
+
+void enter_function_declaration(VsParser* p, vsp_pos_t const_pos, vsp_pos_t func_pos, vsp_pos_t name_pos, vsp_pos_t generic_names_pos) {
+    VSP_LOG("\r\n");
+    VSP_LOG("%*sfunction[%d, %d], name[%d, %d]:%.*s {\r\n", INDENT, POS(func_pos), PSTR(name_pos));
+    p->indent++;
+
+    p->func_spec = (int)p->func_specs.size();
+    p->func_specs.push_back({ func_pos | name_pos, const_pos, func_pos, name_pos, p->TakeGenericNames(), {}, -1 });
+}
+
+void exit_function_declaration(VsParser* p, vsp_pos_t pos) {
+    p->indent--;
+    VSP_LOG("%*s} //function\r\n", INDENT);
+
+    auto& func_spec = p->func_specs[p->func_spec];
+    func_spec.pos = pos;
+
+    if (p->IsInsideStruct()) {
+        // struct method
+        p->struct_decl.methods.push_back(p->func_spec);
+    }
+    else {
+        // global function
+    }
+}
+
+void on_function_parameter(VsParser* p, vsp_pos_t pos, vsp_pos_t const_pos, vsp_pos_t name_pos, vsp_pos_t type_pos) {
+    VSP_LOG("%*sparam[%d, %d]:%.*s\r\n", INDENT, PSTR(pos));
+    p->param_list.push_back({ pos, const_pos, name_pos, p->type_spec });
+}
+
+void on_function_signature(VsParser* p, vsp_pos_t pos, vsp_pos_t type_pos) {
+    VSP_LOG("%*sfunc_sign[%d, %d]:%.*s\r\n", INDENT, PSTR(pos));
+
+    auto& func_spec = p->func_specs[p->func_spec];
+    func_spec.params = p->TakeFunctionParameters();
+    func_spec.type = !IsEmpty(type_pos) ? p->type_spec : -1;
+}
+
+#pragma endregion
+
+void enter_type_declaration(VsParser* p, vsp_pos_t type_pos, vsp_pos_t name_pos) {
+    VSP_LOG("\r\n");
+    VSP_LOG("%*stype[%d, %d], name[%d, %d]:%.*s {\r\n", INDENT, POS(type_pos), PSTR(name_pos));
     p->indent++;
 }
 
-void exit_struct_declaration(vsparserex_t* p) {
+void exit_type_declaration(VsParser* p, vsp_pos_t values_pos) {
+    VSP_LOG("%*svalues[%d, %d]:%.*s\r\n", INDENT, PSTR(values_pos));
     p->indent--;
-    L_LOG("%*s} //struct\r\n", INDENT);
+    VSP_LOG("%*s} //type\r\n", INDENT);
 }
 
-void on_type_parameter(vsparserex_t* p, vsp_pos_t type_param_pos) {
-    L_LOG("%*stype_param[%d, %d]:%.*s\r\n", INDENT, PSTR(type_param_pos));
-}
-
-void on_type_parameters(vsparserex_t* p, vsp_pos_t type_params_pos) {
-    L_LOG("%*stype_params[%d, %d]:%.*s\r\n", INDENT, PSTR(type_params_pos));
-}
-
-void on_super_type_list(vsparserex_t* p, vsp_pos_t type_list_pos) {
-    L_LOG("%*ssuper_types[%d, %d]:%.*s\r\n", INDENT, PSTR(type_list_pos));
-}
-
-void enter_field_declaration(vsparserex_t* p, vsp_pos_t field_pos) {
-    L_LOG("\r\n");
-    L_LOG("%*sfield[%d, %d]:%.*s {\r\n", INDENT, PSTR(field_pos));
-    p->indent++;
-}
-
-void exit_field_declaration(vsparserex_t* p) {
-    p->indent--;
-    L_LOG("%*s} //field\r\n", INDENT);
-}
-
-void on_field_specifier(vsparserex_t* p, vsp_pos_t name_pos, vsp_pos_t type_pos, vsp_pos_t init_pos) {
-    L_LOG("%*sname[%d, %d]:%.*s, type[%d, %d]:%.*s, init[%d, %d]:%.*s\r\n", INDENT, PSTR(name_pos), PSTR(type_pos), PSTR(init_pos));
-}
-
-void enter_function_declaration(vsparserex_t* p, vsp_pos_t func_pos, vsp_pos_t name_pos) {
-    L_LOG("\r\n");
-    L_LOG("%*sfunction[%d, %d], name[%d, %d]:%.*s {\r\n", INDENT, POS(func_pos), PSTR(name_pos));
-    p->indent++;
-}
-
-void exit_function_declaration(vsparserex_t* p) {
-    p->indent--;
-    L_LOG("%*s} //function\r\n", INDENT);
-}
-
-void on_function_signature(vsparserex_t* p, vsp_pos_t func_sign_pos) {
-    L_LOG("%*sfunc_sign[%d, %d]:%.*s\r\n", INDENT, PSTR(func_sign_pos));
-}
-
-void enter_type_declaration(vsparserex_t* p, vsp_pos_t type_pos, vsp_pos_t name_pos) {
-    L_LOG("\r\n");
-    L_LOG("%*stype[%d, %d], name[%d, %d]:%.*s {\r\n", INDENT, POS(type_pos), PSTR(name_pos));
-    p->indent++;
-}
-
-void exit_type_declaration(vsparserex_t* p, vsp_pos_t values_pos) {
-    L_LOG("%*svalues[%d, %d]:%.*s\r\n", INDENT, PSTR(values_pos));
-    p->indent--;
-    L_LOG("%*s} //type\r\n", INDENT);
-}
-
-void vsp_init_listener(vsp_listener_t* l) {
+void vsp_init_listener(vsp_internal_listener_t* l) {
 #define LISTENER(callback) *((void**)&(l->callback)) = (void*)(&callback)
 
     LISTENER(on_module_clause);
@@ -277,10 +543,23 @@ void vsp_init_listener(vsp_listener_t* l) {
     LISTENER(enter_type_declaration);
     LISTENER(exit_type_declaration);
 
+    LISTENER(on_generic_name);
+    LISTENER(on_named_type);
+    LISTENER(on_type_pointer);
+    LISTENER(on_type_reference);
+    LISTENER(on_type_nullable);
+    LISTENER(on_type_list_item);
+    LISTENER(enter_generic_type);
+    LISTENER(exit_generic_type);
+    LISTENER(enter_tuple_type);
+    LISTENER(exit_tuple_type);
+    LISTENER(enter_function_type);
+    LISTENER(on_function_type_return_type);
+    LISTENER(exit_function_type);
+
     LISTENER(enter_struct_declaration);
-    LISTENER(on_type_parameter);
-    LISTENER(on_type_parameters);
-    LISTENER(on_super_type_list);
+    LISTENER(on_struct_generic_names);
+    LISTENER(on_struct_super_type);
     LISTENER(exit_struct_declaration);
 
     LISTENER(enter_field_declaration);
@@ -288,6 +567,7 @@ void vsp_init_listener(vsp_listener_t* l) {
     LISTENER(exit_field_declaration);
 
     LISTENER(enter_function_declaration);
+    LISTENER(on_function_parameter);
     LISTENER(on_function_signature);
     LISTENER(exit_function_declaration);
 #undef LISTENER
@@ -299,28 +579,67 @@ int vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* l
 
     vector<size_t> lines;
 
-    vsparserex_t p;
+    VsParser p = {};
     p.src = src;
     p.len = len;
     p.rp = 0;
     p.indent = 0;
     p.lines.push_back(0);
 
+    listener->ctx = &p;
+    listener->num_lines = 0;
     p.base.el = listener;
-    p.base.il.udata = nullptr;
     vsp_init_listener(&p.base.il);
+    vsp_clear_type_specs(&p);
 
     printf("parse: %s\r\n", file_path);
     vsharp_context_t* ctx = vsharp_create(&p.base);
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
+    listener->num_lines = (int)p.lines.size();
+
     return 0;
+}
+
+void vsp_type_desc(void* ctx, int id, vsp_type_desc_t* type_desc) {
+    VsParser* p = (VsParser*)ctx;
+    if (id < p->type_specs.size()) {
+        const auto& type_spec = p->type_specs.at(id);
+        type_desc->pos = type_spec.pos;
+        type_desc->mod_pos = type_spec.mod_pos;
+        type_desc->name_pos = type_spec.name_pos;
+        type_desc->p_type_params = type_spec.type_params.data();
+        type_desc->n_type_params = (int)type_spec.type_params.size();
+        type_desc->is_generic = type_spec.is_generic;
+        type_desc->is_tuple = type_spec.is_tuple;
+        type_desc->is_function = type_spec.is_function;
+        type_desc->return_type = type_spec.return_type;
+        type_desc->type_pointers = type_spec.type_pointers;
+        type_desc->reference_pos = type_spec.reference_pos;
+        type_desc->nullable_pos = type_spec.nullable_pos;
+    }
+}
+
+void vsp_func_desc(void* ctx, int id, vsp_func_desc_t* func_desc) {
+    VsParser* p = (VsParser*)ctx;
+    if (id < p->func_specs.size()) {
+        const auto& func_spec = p->func_specs.at(id);
+        func_desc->pos = func_spec.pos;
+        func_desc->const_pos = func_spec.const_pos;
+        func_desc->func_pos = func_spec.func_pos;
+        func_desc->name_pos = func_spec.name_pos;
+        func_desc->p_generic_names = func_spec.generic_names.data();
+        func_desc->n_generic_names = (int)func_spec.generic_names.size();
+        func_desc->p_params = func_spec.params.data();
+        func_desc->n_params = (int)func_spec.params.size();
+        func_desc->type = func_spec.type;
+    }
 }
 
 #else
 
-int vsp_readfile(vsparserex_t* p, const char* FileName) {
+int vsp_readfile(VsParser* p, const char* FileName) {
     FILE* textfile;
     size_t length;
     char* text;
@@ -350,13 +669,13 @@ int vsp_readfile(vsparserex_t* p, const char* FileName) {
 }
 
 int main() {
-    vsparserex_t p = {0};
+    VsParser p = {};
     if (vsp_readfile(&p, "./tests/vsharp.vs") != 0)
         return 1;
 
     p.base.el = nullptr;
-    p.base.il.udata = nullptr;
     vsp_init_listener(&p.base.il);
+    vsp_clear_type_specs(&p);
 
     vsharp_context_t* ctx = vsharp_create(&p.base);
     vsharp_parse(ctx, NULL);
