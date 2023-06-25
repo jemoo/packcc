@@ -310,6 +310,13 @@ typedef enum code_reach_tag {
     CODE_REACH__ALWAYS_FAIL = -1
 } code_reach_t;
 
+typedef struct ast_loc_tag {
+    int buf[16];
+    const char *sbuf[16];
+    int size;
+    int times;
+} ast_loc_t;
+
 static const char *g_cmdname = "packcc"; /* replaced later with actual one */
 
 __attribute__((format(printf, 1, 2)))
@@ -1205,7 +1212,7 @@ static void node_const_array__term(node_const_array_t *array) {
 static context_t *create_context(const char *iname, const char *oname, const options_t *opts) {
     context_t *const ctx = (context_t *)malloc_e(sizeof(context_t));
     ctx->iname = strdup_e((iname && iname[0]) ? iname : "-");
-    ctx->sname = (oname && oname[0]) ? add_fileext(oname, "c") : replace_fileext(ctx->iname, "c");
+    ctx->sname = (oname && oname[0]) ? add_fileext(oname, "cpp") : replace_fileext(ctx->iname, "cpp");
     ctx->hname = (oname && oname[0]) ? add_fileext(oname, "h") : replace_fileext(ctx->iname, "h");
     ctx->ifile = (iname && iname[0]) ? fopen_rb_e(ctx->iname) : stdin;
     ctx->hid = strdup_e(ctx->hname); make_header_identifier(ctx->hid);
@@ -2232,7 +2239,7 @@ static node_t *parse_term(context_t *ctx, node_t *rule) {
     node_t *n_q = NULL;
     node_t *n_r = NULL;
     node_t *n_t = NULL;
-    const char t = match_character(ctx, '&') ? '&' : match_character(ctx, '!') ? '!' : '\0';
+    const char t = match_character(ctx, '&') ? '&' : match_character(ctx, '~') ? '~' : '\0';
     if (t) match_spaces(ctx);
     n_p = parse_primary(ctx, rule);
     if (n_p == NULL) goto EXCEPTION;
@@ -2266,7 +2273,7 @@ static node_t *parse_term(context_t *ctx, node_t *rule) {
         n_r->data.predicate.neg = FALSE;
         n_r->data.predicate.expr = n_q;
         break;
-    case '!':
+    case '~':
         n_r = create_node(NODE_PREDICATE);
         n_r->data.predicate.neg = TRUE;
         n_r->data.predicate.expr = n_q;
@@ -2274,7 +2281,7 @@ static node_t *parse_term(context_t *ctx, node_t *rule) {
     default:
         n_r = n_q;
     }
-    if (match_character(ctx, '~')) {
+    if (match_character(ctx, '!')) {
         size_t p, l, m;
         match_spaces(ctx);
         p = ctx->bufcur;
@@ -2622,7 +2629,51 @@ static bool_t parse(context_t *ctx) {
     return (ctx->errnum == 0) ? TRUE : FALSE;
 }
 
-static code_reach_t generate_matching_string_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare) {
+static int ast__push(ast_loc_t* ast_loc) {
+    int index = ast_loc->size;
+    ast_loc->size++;
+    ast_loc->times++;
+    if (ast_loc->size >= sizeof(ast_loc->buf) / sizeof(ast_loc->buf[0])) {
+        fprintf(stderr, "ast__push");
+    }
+    return index;
+}
+
+static void ast__pop(ast_loc_t* ast_loc, int index) {
+    ast_loc->size--;
+    if (index != ast_loc->size) {
+        fprintf(stderr, "ast__pop");
+    }
+}
+
+static void ast__sets(ast_loc_t* ast_loc, int index, const char* s) {
+    ast_loc->sbuf[index] = s;
+}
+
+static void ast__seti(ast_loc_t* ast_loc, int index, size_t i) {
+    ast_loc->buf[index] = (int)i;
+    ast_loc->sbuf[index] = 0;
+}
+
+static void ast__print(const ast_loc_t* ast_loc, stream_t* stream, size_t indent) {
+    stream__write_characters(stream, ' ', indent);
+    stream__puts(stream, "// PCC_AST(");
+    for (int i = 0; i < ast_loc->size; i++) {
+        if (i > 0) {
+            stream__puts(stream, ", ");
+        }
+        const char *s = ast_loc->sbuf[i];
+        if (s) {
+            stream__printf(stream, "%s", s);
+        }
+        else {
+            stream__printf(stream, "%d", ast_loc->buf[i]);
+        }
+    }
+    stream__puts(stream, ");\n");
+}
+
+static code_reach_t generate_matching_string_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     const size_t n = (value != NULL) ? strlen(value) : 0;
     if (n > 0) {
         char s[5];
@@ -2664,7 +2715,7 @@ static code_reach_t generate_matching_string_code(generate_t *gen, const char *v
     }
 }
 
-static code_reach_t generate_matching_charclass_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_matching_charclass_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     assert(gen->ascii);
     if (value != NULL) {
         const size_t n = strlen(value);
@@ -2763,7 +2814,7 @@ static code_reach_t generate_matching_charclass_code(generate_t *gen, const char
     }
 }
 
-static code_reach_t generate_matching_utf8_charclass_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_matching_utf8_charclass_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     const size_t n = (value != NULL) ? strlen(value) : 0;
     if (value == NULL || n > 0) {
         const bool_t a = (n > 0 && value[0] == '^') ? TRUE : FALSE;
@@ -2831,9 +2882,9 @@ static code_reach_t generate_matching_utf8_charclass_code(generate_t *gen, const
     }
 }
 
-static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare);
+static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc);
 
-static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *expr, int min, int max, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *expr, int min, int max, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     if (max > 1 || max < 0) {
         code_reach_t r;
         if (!bare) {
@@ -2841,6 +2892,8 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__puts(gen->stream, "{\n");
             indent += 4;
         }
+        int ast_index = ast__push(ast_loc);
+        ast__sets(ast_loc, ast_index, "i");
         if (min > 0) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "const size_t p0 = ctx->cur;\n");
@@ -2861,7 +2914,11 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
         stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
         {
             const int l = ++gen->label;
-            r = generate_code(gen, expr, l, indent + 4, FALSE);
+            const int ast_times = ast_loc->times;
+            r = generate_code(gen, expr, l, indent + 4, FALSE, ast_loc);
+            if (ast_times == ast_loc->times) {
+                ast__print(ast_loc, gen->stream, indent + 4);
+            }
             stream__write_characters(gen->stream, ' ', indent + 4);
             stream__printf(gen->stream, "if (ctx->cur == p%d) break;\n", gen->scope);
             if (r != CODE_REACH__ALWAYS_SUCCEED) {
@@ -2892,6 +2949,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "}\n");
         }
+        ast__pop(ast_loc, ast_index);
         if (!bare) {
             indent -= 4;
             stream__write_characters(gen->stream, ' ', indent);
@@ -2901,7 +2959,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
     }
     else if (max == 1) {
         if (min > 0) {
-            return generate_code(gen, expr, onfail, indent, bare);
+            return generate_code(gen, expr, onfail, indent, bare, ast_loc);
         }
         else {
             if (!bare) {
@@ -2916,7 +2974,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
             {
                 const int l = ++gen->label;
-                if (generate_code(gen, expr, l, indent, FALSE) != CODE_REACH__ALWAYS_SUCCEED) {
+                if (generate_code(gen, expr, l, indent, FALSE, ast_loc) != CODE_REACH__ALWAYS_SUCCEED) {
                     const int m = ++gen->label;
                     stream__write_characters(gen->stream, ' ', indent);
                     stream__printf(gen->stream, "goto L%04d;\n", m);
@@ -2945,7 +3003,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
     }
 }
 
-static code_reach_t generate_predicating_code(generate_t *gen, const node_t *expr, bool_t neg, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_predicating_code(generate_t *gen, const node_t *expr, bool_t neg, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     code_reach_t r;
     if (!bare) {
         stream__write_characters(gen->stream, ' ', indent);
@@ -2957,7 +3015,7 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
     stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     if (neg) {
         const int l = ++gen->label;
-        r = generate_code(gen, expr, l, indent, FALSE);
+        r = generate_code(gen, expr, l, indent, FALSE, ast_loc);
         if (r != CODE_REACH__ALWAYS_FAIL) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
@@ -2979,7 +3037,7 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
     else {
         const int l = ++gen->label;
         const int m = ++gen->label;
-        r = generate_code(gen, expr, l, indent, FALSE);
+        r = generate_code(gen, expr, l, indent, FALSE, ast_loc);
         if (r != CODE_REACH__ALWAYS_FAIL) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "ctx->cur = p;\n");
@@ -3010,11 +3068,19 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
     return r;
 }
 
-static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t *nodes, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t *nodes, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     bool_t b = FALSE;
     size_t i;
+    code_reach_t r;
+    int ast_index = ast__push(ast_loc);
     for (i = 0; i < nodes->len; i++) {
-        switch (generate_code(gen, nodes->buf[i], onfail, indent, FALSE)) {
+        ast__seti(ast_loc, ast_index, i);
+        int ast_times = ast_loc->times;
+        r = generate_code(gen, nodes->buf[i], onfail, indent, FALSE, ast_loc);
+        if (ast_times == ast_loc->times) {
+            ast__print(ast_loc, gen->stream, indent);
+        }
+        switch (r) {
         case CODE_REACH__ALWAYS_FAIL:
             if (i + 1 < nodes->len) {
                 stream__write_characters(gen->stream, ' ', indent);
@@ -3027,10 +3093,11 @@ static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t
             b = TRUE;
         }
     }
+    ast__pop(ast_loc, ast_index);
     return b ? CODE_REACH__BOTH : CODE_REACH__ALWAYS_SUCCEED;
 }
 
-static code_reach_t generate_alternative_code(generate_t *gen, const node_array_t *nodes, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_alternative_code(generate_t *gen, const node_array_t *nodes, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     bool_t b = FALSE;
     int m = ++gen->label;
     size_t i;
@@ -3047,7 +3114,7 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
     for (i = 0; i < nodes->len; i++) {
         const bool_t c = (i + 1 < nodes->len) ? TRUE : FALSE;
         const int l = ++gen->label;
-        switch (generate_code(gen, nodes->buf[i], l, indent, FALSE)) {
+        switch (generate_code(gen, nodes->buf[i], l, indent, FALSE, ast_loc)) {
         case CODE_REACH__ALWAYS_SUCCEED:
             if (c) {
                 stream__write_characters(gen->stream, ' ', indent);
@@ -3095,7 +3162,7 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
     return b ? CODE_REACH__BOTH : CODE_REACH__ALWAYS_FAIL;
 }
 
-static code_reach_t generate_capturing_code(generate_t *gen, const node_t *expr, size_t index, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_capturing_code(generate_t *gen, const node_t *expr, size_t index, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     code_reach_t r;
     if (!bare) {
         stream__write_characters(gen->stream, ' ', indent);
@@ -3107,7 +3174,7 @@ static code_reach_t generate_capturing_code(generate_t *gen, const node_t *expr,
     stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "size_t q%d;\n", gen->scope);
-    r = generate_code(gen, expr, onfail, indent, FALSE);
+    r = generate_code(gen, expr, onfail, indent, FALSE, ast_loc);
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
@@ -3123,7 +3190,7 @@ static code_reach_t generate_capturing_code(generate_t *gen, const node_t *expr,
     return r;
 }
 
-static code_reach_t generate_expanding_code(generate_t *gen, size_t index, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_expanding_code(generate_t *gen, size_t index, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     if (!bare) {
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "{\n");
@@ -3218,7 +3285,7 @@ static code_reach_t generate_thunking_action_code(
 }
 
 static code_reach_t generate_thunking_error_code(
-    generate_t *gen, const node_t *expr, size_t index, const node_const_array_t *vars, const node_const_array_t *capts, int onfail, size_t indent, bool_t bare
+    generate_t *gen, const node_t *expr, size_t index, const node_const_array_t *vars, const node_const_array_t *capts, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc
 ) {
     code_reach_t r;
     const int l = ++gen->label;
@@ -3229,7 +3296,7 @@ static code_reach_t generate_thunking_error_code(
         stream__puts(gen->stream, "{\n");
         indent += 4;
     }
-    r = generate_code(gen, expr, l, indent, TRUE);
+    r = generate_code(gen, expr, l, indent, TRUE, ast_loc);
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "goto L%04d;\n", m);
     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
@@ -3247,7 +3314,7 @@ static code_reach_t generate_thunking_error_code(
     return r;
 }
 
-static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare) {
+static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     if (node == NULL) {
         print_error("Internal error [%d]\n", __LINE__);
         exit(-1);
@@ -3269,30 +3336,30 @@ static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfai
         }
         return CODE_REACH__BOTH;
     case NODE_STRING:
-        return generate_matching_string_code(gen, node->data.string.value, onfail, indent, bare);
+        return generate_matching_string_code(gen, node->data.string.value, onfail, indent, bare, ast_loc);
     case NODE_CHARCLASS:
         return gen->ascii ?
-               generate_matching_charclass_code(gen, node->data.charclass.value, onfail, indent, bare) :
-               generate_matching_utf8_charclass_code(gen, node->data.charclass.value, onfail, indent, bare);
+               generate_matching_charclass_code(gen, node->data.charclass.value, onfail, indent, bare, ast_loc) :
+               generate_matching_utf8_charclass_code(gen, node->data.charclass.value, onfail, indent, bare, ast_loc);
     case NODE_QUANTITY:
-        return generate_quantifying_code(gen, node->data.quantity.expr, node->data.quantity.min, node->data.quantity.max, onfail, indent, bare);
+        return generate_quantifying_code(gen, node->data.quantity.expr, node->data.quantity.min, node->data.quantity.max, onfail, indent, bare, ast_loc);
     case NODE_PREDICATE:
-        return generate_predicating_code(gen, node->data.predicate.expr, node->data.predicate.neg, onfail, indent, bare);
+        return generate_predicating_code(gen, node->data.predicate.expr, node->data.predicate.neg, onfail, indent, bare, ast_loc);
     case NODE_SEQUENCE:
-        return generate_sequential_code(gen, &node->data.sequence.nodes, onfail, indent, bare);
+        return generate_sequential_code(gen, &node->data.sequence.nodes, onfail, indent, bare, ast_loc);
     case NODE_ALTERNATE:
-        return generate_alternative_code(gen, &node->data.alternate.nodes, onfail, indent, bare);
+        return generate_alternative_code(gen, &node->data.alternate.nodes, onfail, indent, bare, ast_loc);
     case NODE_CAPTURE:
-        return generate_capturing_code(gen, node->data.capture.expr, node->data.capture.index, onfail, indent, bare);
+        return generate_capturing_code(gen, node->data.capture.expr, node->data.capture.index, onfail, indent, bare, ast_loc);
     case NODE_EXPAND:
-        return generate_expanding_code(gen, node->data.expand.index, onfail, indent, bare);
+        return generate_expanding_code(gen, node->data.expand.index, onfail, indent, bare, ast_loc);
     case NODE_ACTION:
         return generate_thunking_action_code(
             gen, node->data.action.index, &node->data.action.vars, &node->data.action.capts, FALSE, onfail, indent, bare
         );
     case NODE_ERROR:
         return generate_thunking_error_code(
-            gen, node->data.error.expr, node->data.error.index, &node->data.error.vars, &node->data.error.capts, onfail, indent, bare
+            gen, node->data.error.expr, node->data.error.index, &node->data.error.vars, &node->data.error.capts, onfail, indent, bare, ast_loc
         );
     default:
         print_error("Internal error [%d]\n", __LINE__);
@@ -4756,7 +4823,9 @@ static bool_t generate(context_t *ctx) {
                         "    pcc_value_table__clear(ctx->auxil, &chunk->values);\n"
                     );
                 }
-                r = generate_code(&g, ctx->rules.buf[i]->data.rule.expr, 0, 4, FALSE);
+                ast_loc_t ast_loc;
+                memset(&ast_loc, 0, sizeof(ast_loc));
+                r = generate_code(&g, ctx->rules.buf[i]->data.rule.expr, 0, 4, FALSE, &ast_loc);
                 stream__printf(
                     &sstream,
                     "    ctx->level--;\n"

@@ -14,9 +14,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int vsp_getchar(vsparser_t* p);
 void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
 void vsp_error(vsparser_t *p);
+
+#ifdef __cplusplus
+}
+#endif
 
 #define PCC_GETCHAR(auxil)\
         vsp_getchar(auxil)
@@ -51,7 +59,7 @@ void vsp_error(vsparser_t *p);
 }
 
 compilation_unit
-    : _ (top_level_declaration _)* EOF
+    : ( _ top_level_declaration )* _ EOF
     ;
 
 top_level_declaration
@@ -318,27 +326,27 @@ boolean_literal
     | KW_FALSE
     ;
 
-KW_MODULE       : 'module'          !LD
-KW_IMPORT       : 'import'          !LD
-KW_AS           : 'as'              !LD
-KW_IF           : 'if'              !LD
-KW_UNSAFE       : 'unsafe'          !LD
-KW_PUBLIC       : 'public'          !LD
-KW_STRUCT       : 'struct'          !LD
-KW_UNION        : 'union'           !LD
-KW_CLASS        : 'class'           !LD
-KW_INTERFACE    : 'interface'       !LD
-KW_ENUM         : 'enum'            !LD
-KW_FUNCTION     : 'function'        !LD                 { $$=VPOS(0); }
-KW_TYPE         : 'type'            !LD                 { $$=VPOS(0); }
-KW_CONST        : 'const'           !LD                 { $$=VPOS(0); }
-KW_LET          : 'let'             !LD
-KW_VAR          : 'var'             !LD
-KW_TRUE         : 'true'            !LD
-KW_FALSE        : 'false'           !LD
-KW_NULL         : 'null'            !LD
-KW_THIS         : 'this'            !LD
-KW_BASE         : 'base'            !LD
+KW_MODULE       : 'module'          ~LD
+KW_IMPORT       : 'import'          ~LD
+KW_AS           : 'as'              ~LD
+KW_IF           : 'if'              ~LD
+KW_UNSAFE       : 'unsafe'          ~LD
+KW_PUBLIC       : 'public'          ~LD
+KW_STRUCT       : 'struct'          ~LD
+KW_UNION        : 'union'           ~LD
+KW_CLASS        : 'class'           ~LD
+KW_INTERFACE    : 'interface'       ~LD
+KW_ENUM         : 'enum'            ~LD
+KW_FUNCTION     : 'function'        ~LD                 { $$=VPOS(0); }
+KW_TYPE         : 'type'            ~LD                 { $$=VPOS(0); }
+KW_CONST        : 'const'           ~LD                 { $$=VPOS(0); }
+KW_LET          : 'let'             ~LD
+KW_VAR          : 'var'             ~LD
+KW_TRUE         : 'true'            ~LD
+KW_FALSE        : 'false'           ~LD
+KW_NULL         : 'null'            ~LD
+KW_THIS         : 'this'            ~LD
+KW_BASE         : 'base'            ~LD
 
 KEYWORDS        : KW_MODULE | KW_IMPORT | KW_AS
 
@@ -346,15 +354,15 @@ LETTER          : [a-zA-Zα-ωΑ-Ωµ_]
 DIGIT           : [0-9]
 LD              : LETTER | DIGIT
 
-STRING_LITERAL  : '\"' ( !'\"' . )* '\"'
+STRING_LITERAL  : '\"' ( ~'\"' . )* '\"'
 INTEGER_LITERAL : [0-9]+
 
 _               : (SPACE | EOL | COMMENT)*
 SPACE           : [ \u0009\u000B\u000C]
-COMMENT         : '//' ( !EOL . )*
-                | '/*' ( !'*/' . )* '*/'
+COMMENT         : '//' ( ~EOL . )*
+                | '/*' ( ~'*/' . )* '*/'
 EOL             : '\n' | '\r\n' | '\r'
-EOF             : !.
+EOF             : ~.
 
 %%
 

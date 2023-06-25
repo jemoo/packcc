@@ -1,5 +1,6 @@
 #include "vsparser.h"
 #include "vsharp.h"
+#include "peglib.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -202,6 +203,10 @@ void vsp_debug(VsParser* p, int event, const char* rule, int level, size_t pos, 
 void vsp_error(VsParser* p) {
     fprintf(stderr, "Syntax error\n");
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #define STR(_POS)       _POS.end-_POS.start, p->src+_POS.start
 #define POS(_POS)       _POS.start, _POS.end
@@ -668,6 +673,56 @@ int vsp_readfile(VsParser* p, const char* FileName) {
     return 0;
 }
 
+typedef std::shared_ptr<peg::Ast> AstNode;
+std::vector<AstNode> ast_nodes;
+AstNode cur_node;
+
+void vsp_print_ast_node(AstNode node) {
+    if (!node) {
+        printf("null");
+    }
+    auto parent = node->parent.lock();
+    if (parent) {
+        vsp_print_ast_node(parent);
+        printf(".%s", node->name.c_str());
+    }
+    else {
+        printf("%s", node->name.c_str());
+    }
+}
+
+void vsp_ast_push(const char* name) {
+    auto node = std::make_shared<peg::Ast>("", 0, 0, name, name);
+    ast_nodes.push_back(node);
+    if (cur_node) {
+        node->parent = cur_node;
+        cur_node->nodes.push_back(node);
+    }
+    cur_node = node;
+    printf(">> ");
+    vsp_print_ast_node(node);
+    printf("\r\n");
+}
+
+void vsp_ast_pop(const char* name, bool succeeded) {
+    if (cur_node->name != name) {
+        printf("missmatch: %s %s", name, cur_node->name.c_str());
+    }
+    ast_nodes.pop_back();
+    if (ast_nodes.empty()) {
+        cur_node = nullptr;
+    }
+    else {
+        cur_node = ast_nodes.back();
+        if (!succeeded) {
+            cur_node->nodes.pop_back();
+        }
+    }
+    printf("<< ");
+    vsp_print_ast_node(cur_node);
+    printf("\r\n");
+}
+
 int main() {
     VsParser p = {};
     if (vsp_readfile(&p, "./tests/vsharp.vs") != 0)
@@ -677,15 +732,16 @@ int main() {
     vsp_init_listener(&p.base.il);
     vsp_clear_type_specs(&p);
 
+    vsp_ast_push("root");
+
     vsharp_context_t* ctx = vsharp_create(&p.base);
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
+    std::cout << "--------------------------------------------------" << std::endl;
+    std::cout << peg::ast_to_s(cur_node);
+
     return 0;
 }
 
-#endif
-
-#ifdef __cplusplus
-}
 #endif
