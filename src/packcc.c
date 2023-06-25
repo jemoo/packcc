@@ -293,6 +293,7 @@ typedef struct generate_tag {
     stream_t *stream;
     const node_t *rule;
     int label;
+    int scope;
     bool_t ascii;
 } generate_t;
 
@@ -2771,13 +2772,14 @@ static code_reach_t generate_matching_utf8_charclass_code(generate_t *gen, const
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "{\n");
             indent += 4;
+            gen->scope++;
         }
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "int u;\n");
         stream__write_characters(gen->stream, ' ', indent);
-        stream__puts(gen->stream, "const size_t n = pcc_get_char_as_utf32(ctx, &u);\n");
+        stream__printf(gen->stream, "const size_t n%d = pcc_get_char_as_utf32(ctx, &u);\n", gen->scope);
         stream__write_characters(gen->stream, ' ', indent);
-        stream__printf(gen->stream, "if (n == 0) goto L%04d;\n", onfail);
+        stream__printf(gen->stream, "if (n%d == 0) goto L%04d;\n", gen->scope, onfail);
         if (value != NULL && !(a && n == 1)) { /* not '.' or '[^]' */
             int u0 = 0;
             bool_t r = FALSE;
@@ -2813,8 +2815,9 @@ static code_reach_t generate_matching_utf8_charclass_code(generate_t *gen, const
             stream__printf(gen->stream, a ? ") goto L%04d;\n" : ")) goto L%04d;\n", onfail);
         }
         stream__write_characters(gen->stream, ' ', indent);
-        stream__puts(gen->stream, "ctx->cur += n;\n");
+        stream__printf(gen->stream, "ctx->cur += n%d;\n", gen->scope);
         if (!bare) {
+            gen->scope--;
             indent -= 4;
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "}\n");
@@ -2851,28 +2854,30 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__puts(gen->stream, "for (i = 0;; i++) {\n");
         else
             stream__printf(gen->stream, "for (i = 0; i < %d; i++) {\n", max);
+        gen->scope++;
         stream__write_characters(gen->stream, ' ', indent + 4);
-        stream__puts(gen->stream, "const size_t p = ctx->cur;\n");
+        stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
         stream__write_characters(gen->stream, ' ', indent + 4);
-        stream__puts(gen->stream, "const size_t n = chunk->thunks.len;\n");
+        stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
         {
             const int l = ++gen->label;
             r = generate_code(gen, expr, l, indent + 4, FALSE);
             stream__write_characters(gen->stream, ' ', indent + 4);
-            stream__puts(gen->stream, "if (ctx->cur == p) break;\n");
+            stream__printf(gen->stream, "if (ctx->cur == p%d) break;\n", gen->scope);
             if (r != CODE_REACH__ALWAYS_SUCCEED) {
                 stream__write_characters(gen->stream, ' ', indent + 4);
                 stream__puts(gen->stream, "continue;\n");
                 stream__write_characters(gen->stream, ' ', indent);
                 stream__printf(gen->stream, "L%04d:;\n", l);
                 stream__write_characters(gen->stream, ' ', indent + 4);
-                stream__puts(gen->stream, "ctx->cur = p;\n");
+                stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
                 stream__write_characters(gen->stream, ' ', indent + 4);
-                stream__puts(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n);\n");
+                stream__printf(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n%d);\n", gen->scope);
                 stream__write_characters(gen->stream, ' ', indent + 4);
                 stream__puts(gen->stream, "break;\n");
             }
         }
+        gen->scope--;
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "}\n");
         if (min > 0) {
@@ -2903,11 +2908,12 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
                 stream__write_characters(gen->stream, ' ', indent);
                 stream__puts(gen->stream, "{\n");
                 indent += 4;
+                gen->scope++;
             }
             stream__write_characters(gen->stream, ' ', indent);
-            stream__puts(gen->stream, "const size_t p = ctx->cur;\n");
+            stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
             stream__write_characters(gen->stream, ' ', indent);
-            stream__puts(gen->stream, "const size_t n = chunk->thunks.len;\n");
+            stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
             {
                 const int l = ++gen->label;
                 if (generate_code(gen, expr, l, indent, FALSE) != CODE_REACH__ALWAYS_SUCCEED) {
@@ -2917,14 +2923,15 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", l);
                     stream__write_characters(gen->stream, ' ', indent);
-                    stream__puts(gen->stream, "ctx->cur = p;\n");
+                    stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
                     stream__write_characters(gen->stream, ' ', indent);
-                    stream__puts(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n);\n");
+                    stream__printf(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n%d);\n", gen->scope);
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", m);
                 }
             }
             if (!bare) {
+                gen->scope--;
                 indent -= 4;
                 stream__write_characters(gen->stream, ' ', indent);
                 stream__puts(gen->stream, "}\n");
@@ -2944,15 +2951,16 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "{\n");
         indent += 4;
+        gen->scope++;
     }
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "const size_t p = ctx->cur;\n");
+    stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     if (neg) {
         const int l = ++gen->label;
         r = generate_code(gen, expr, l, indent, FALSE);
         if (r != CODE_REACH__ALWAYS_FAIL) {
             stream__write_characters(gen->stream, ' ', indent);
-            stream__puts(gen->stream, "ctx->cur = p;\n");
+            stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
             stream__write_characters(gen->stream, ' ', indent);
             stream__printf(gen->stream, "goto L%04d;\n", onfail);
         }
@@ -2960,7 +2968,7 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
             if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
             stream__printf(gen->stream, "L%04d:;\n", l);
             stream__write_characters(gen->stream, ' ', indent);
-            stream__puts(gen->stream, "ctx->cur = p;\n");
+            stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
         }
         switch (r) {
         case CODE_REACH__ALWAYS_SUCCEED: r = CODE_REACH__ALWAYS_FAIL; break;
@@ -2994,6 +3002,7 @@ static code_reach_t generate_predicating_code(generate_t *gen, const node_t *exp
         }
     }
     if (!bare) {
+        gen->scope--;
         indent -= 4;
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "}\n");
@@ -3029,11 +3038,12 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "{\n");
         indent += 4;
+        gen->scope++;
     }
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "const size_t p = ctx->cur;\n");
+    stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "const size_t n = chunk->thunks.len;\n");
+    stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
     for (i = 0; i < nodes->len; i++) {
         const bool_t c = (i + 1 < nodes->len) ? TRUE : FALSE;
         const int l = ++gen->label;
@@ -3048,6 +3058,7 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
                 stream__printf(gen->stream, "L%04d:;\n", m);
             }
             if (!bare) {
+                gen->scope--;
                 indent -= 4;
                 stream__write_characters(gen->stream, ' ', indent);
                 stream__puts(gen->stream, "}\n");
@@ -3063,9 +3074,9 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
         if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
         stream__printf(gen->stream, "L%04d:;\n", l);
         stream__write_characters(gen->stream, ' ', indent);
-        stream__puts(gen->stream, "ctx->cur = p;\n");
+        stream__printf(gen->stream, "ctx->cur = p%d;\n", gen->scope);
         stream__write_characters(gen->stream, ' ', indent);
-        stream__puts(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n);\n");
+        stream__printf(gen->stream, "pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, n%d);\n", gen->scope);
         if (!c) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__printf(gen->stream, "goto L%04d;\n", onfail);
@@ -3076,6 +3087,7 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
         stream__printf(gen->stream, "L%04d:;\n", m);
     }
     if (!bare) {
+        gen->scope--;
         indent -= 4;
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "}\n");
@@ -3089,19 +3101,21 @@ static code_reach_t generate_capturing_code(generate_t *gen, const node_t *expr,
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "{\n");
         indent += 4;
+        gen->scope++;
     }
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "const size_t p = ctx->cur;\n");
+    stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "size_t q;\n");
+    stream__printf(gen->stream, "size_t q%d;\n", gen->scope);
     r = generate_code(gen, expr, onfail, indent, FALSE);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "q = ctx->cur;\n");
+    stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__printf(gen->stream, "chunk->capts.buf[" FMT_LU "].range.start = p;\n", (ulong_t)index);
+    stream__printf(gen->stream, "chunk->capts.buf[" FMT_LU "].range.start = p%d;\n", (ulong_t)index, gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__printf(gen->stream, "chunk->capts.buf[" FMT_LU "].range.end = q;\n", (ulong_t)index);
+    stream__printf(gen->stream, "chunk->capts.buf[" FMT_LU "].range.end = q%d;\n", (ulong_t)index, gen->scope);
     if (!bare) {
+        gen->scope--;
         indent -= 4;
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "}\n");
@@ -3114,12 +3128,13 @@ static code_reach_t generate_expanding_code(generate_t *gen, size_t index, int o
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "{\n");
         indent += 4;
+        gen->scope++;
     }
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream,
-        "const size_t n = chunk->capts.buf[" FMT_LU "].range.end - chunk->capts.buf[" FMT_LU "].range.start;\n", (ulong_t)index, (ulong_t)index);
+        "const size_t n%d = chunk->capts.buf[" FMT_LU "].range.end - chunk->capts.buf[" FMT_LU "].range.start;\n", gen->scope, (ulong_t)index, (ulong_t)index);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__printf(gen->stream, "if (pcc_refill_buffer(ctx, n) < n) goto L%04d;\n", onfail);
+    stream__printf(gen->stream, "if (pcc_refill_buffer(ctx, n%d) < n%d) goto L%04d;\n", gen->scope, gen->scope, onfail);
     stream__write_characters(gen->stream, ' ', indent);
     stream__puts(gen->stream, "if (n > 0) {\n");
     stream__write_characters(gen->stream, ' ', indent + 4);
@@ -3129,16 +3144,17 @@ static code_reach_t generate_expanding_code(generate_t *gen, size_t index, int o
     stream__write_characters(gen->stream, ' ', indent + 4);
     stream__puts(gen->stream, "size_t i;\n");
     stream__write_characters(gen->stream, ' ', indent + 4);
-    stream__puts(gen->stream, "for (i = 0; i < n; i++) {\n");
+    stream__printf(gen->stream, "for (i = 0; i < n%d; i++) {\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent + 8);
     stream__printf(gen->stream, "if (p[i] != q[i]) goto L%04d;\n", onfail);
     stream__write_characters(gen->stream, ' ', indent + 4);
     stream__puts(gen->stream, "}\n");
     stream__write_characters(gen->stream, ' ', indent + 4);
-    stream__puts(gen->stream, "ctx->cur += n;\n");
+    stream__printf(gen->stream, "ctx->cur += n%d;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
     stream__puts(gen->stream, "}\n");
     if (!bare) {
+        gen->scope--;
         indent -= 4;
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "}\n");
@@ -4709,6 +4725,7 @@ static bool_t generate(context_t *ctx) {
                 g.stream = &sstream;
                 g.rule = ctx->rules.buf[i];
                 g.label = 0;
+                g.scope = 0;
                 g.ascii = ctx->opts.ascii;
                 stream__printf(
                     &sstream,
