@@ -54,6 +54,15 @@ void vsp_error(vsparser_t *p);
 #ifndef TRUE
 #define TRUE    1
 #define FALSE   0
+
+void vsp_ast_embed(struct pcc_thunk_chunk_tag* chunk, int num, ...);
+void vsp_ast_chose(struct pcc_thunk_chunk_tag* chunk, int index);
+void vsp_ast_match(struct pcc_thunk_chunk_tag* chunk, const char *name);
+void vsp_ast_gen(const struct pcc_thunk_array_tag *thunks);
+#define PCC_AST_EMBED(CHUNK, ...)  vsp_ast_embed(CHUNK, __VA_ARGS__)
+#define PCC_AST_CHOSE(CHUNK, INDEX) vsp_ast_chose(CHUNK, INDEX)
+#define PCC_AST_MATCH(CHUNK, NAME)  vsp_ast_match(CHUNK, NAME)
+#define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(THUNKS)
 #endif
 
 }
@@ -367,3 +376,48 @@ EOF             : ~.
 %%
 
 #undef PCC_INVOKE
+
+#include <stdarg.h>
+
+void vsp_ast_embed(pcc_thunk_chunk_t* chunk, int num, ...) {
+    if (chunk->thunks.len == 0) {
+        return;
+    }
+    pcc_thunk_t* thunk = chunk->thunks.buf[chunk->thunks.len-1];
+    if (chunk->ast_info.last_thunk == thunk) {
+        return;
+    }
+    chunk->ast_info.last_thunk = thunk;
+
+    va_list valist;
+    va_start(valist, num);
+    for (int i = 0; i < num; i++)
+    {
+        thunk->ast_info.embed[i] = va_arg(valist, int);
+    }
+    va_end(valist);
+
+    thunk->ast_info.num_embed = num;
+}
+
+void vsp_ast_chose(pcc_thunk_chunk_t* chunk, int index) {
+    chunk->ast_info.chose = index;
+}
+
+void vsp_ast_match(pcc_thunk_chunk_t* chunk, const char *name) {
+    chunk->ast_info.name = name;
+}
+
+void vsp_ast_push(const char* name);
+void vsp_ast_pop(const char* name, bool succeeded);
+
+void vsp_ast_dump(const pcc_thunk_t* thunk) {
+    vsp_ast_push(thunk->ast_info.chunk_info.name);
+    vsp_ast_pop(thunk->ast_info.chunk_info.name, true);
+}
+
+void vsp_ast_gen(const pcc_thunk_array_t *thunks) {
+    if (thunks->len == 1) {
+        vsp_ast_dump(thunks->buf[0]);
+    }
+}
