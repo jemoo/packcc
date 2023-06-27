@@ -1,5 +1,7 @@
 //single_line_comment
 
+[if AttributeName ?]
+[AttributeName : AttributeValue]
 [AttributeName]
 module ModuleName
 

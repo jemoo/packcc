@@ -1,12 +1,15 @@
 #include "vsparser.h"
 #include "vsharp.h"
-#include "peglib.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include <vector>
 #include <string>
+#include <memory>
+#include <functional>
+#include <iostream>
 
 using namespace std;
 
@@ -143,8 +146,8 @@ void vsp_compute_line_and_column(VsParser* p, size_t pos, size_t& line, size_t& 
             return;
         }
     }
-    line = -1;
-    col = -1;
+    line = 0;
+    col = 0;
 }
 
 void vsp_clear_type_specs(VsParser* p) {
@@ -190,7 +193,8 @@ vsp_pos_t vsp_pos(vsparser_t* p, size_t start, size_t end) {
         pos.end = (int)end;
         size_t line, col;
         vsp_compute_line_and_column((VsParser*)p, start, line, col);
-        pos.line = line, pos.col = col;
+        pos.line = (int)line;
+        pos.col = (int)col;
     }
     return pos;
 }
@@ -675,8 +679,117 @@ int vsp_readfile(VsParser* p, const char* FileName) {
     return 0;
 }
 
-typedef std::shared_ptr<peg::Ast> AstNode;
-std::vector<AstNode> ast_nodes;
+/*-----------------------------------------------------------------------------
+ *  AST
+ *---------------------------------------------------------------------------*/
+
+template <typename Annotation> struct AstBase : public Annotation {
+    AstBase(size_t line, size_t column, const char* name, size_t position = 0, size_t length = 0,
+        size_t choice_count = 0, size_t choice = 0)
+        : line(line), column(column), name(name),
+        position(position), length(length), choice_count(choice_count),
+        choice(choice), original_name(name),
+        original_choice_count(choice_count), original_choice(choice) {}
+
+    AstBase(const AstBase& ast, const char* original_name, size_t position = 0,
+        size_t length = 0, size_t original_choice_count = 0,
+        size_t original_choice = 0)
+        : line(ast.line), column(ast.column), name(ast.name),
+        position(position), length(length), choice_count(ast.choice_count),
+        choice(ast.choice), original_name(original_name),
+        original_choice_count(original_choice_count),
+        original_choice(original_choice), nodes(ast.nodes), parent(ast.parent) {}
+
+    const size_t line = 1;
+    const size_t column = 1;
+
+    size_t position;
+    size_t length;
+    const std::string name;
+    const size_t choice_count;
+    const size_t choice;
+    const std::string original_name;
+    const size_t original_choice_count;
+    const size_t original_choice;
+
+    std::vector<std::shared_ptr<AstBase<Annotation>>> nodes;
+    std::weak_ptr<AstBase<Annotation>> parent;
+};
+
+template <typename T>
+void ast_to_s_core(const std::shared_ptr<T>& ptr, std::string& s, int level,
+    std::function<std::string(const T& ast, int level)> fn) {
+    const auto& ast = *ptr;
+    for (auto i = 0; i < level; i++) {
+        s += "  ";
+    }
+    auto name = ast.name;
+    if (ast.name != ast.original_name) {
+        name += ": " + ast.original_name;
+    }
+    if (ast.nodes.empty()) {
+        s += "- " + name + "\n";
+    }
+    else {
+        s += "+ " + name + "\n";
+    }
+    if (fn) { s += fn(ast, level + 1); }
+    for (auto node : ast.nodes) {
+        ast_to_s_core(node, s, level + 1, fn);
+    }
+}
+
+template <typename T>
+std::string
+ast_to_s(const std::shared_ptr<T>& ptr,
+    std::function<std::string(const T& ast, int level)> fn = nullptr) {
+    std::string s;
+    ast_to_s_core(ptr, s, 0, fn);
+    return s;
+}
+
+struct AstOptimizer {
+    AstOptimizer(bool mode, const std::vector<std::string>& rules = {})
+        : mode_(mode), rules_(rules) {}
+
+    template <typename T>
+    std::shared_ptr<T> optimize(std::shared_ptr<T> original,
+        std::shared_ptr<T> parent = nullptr) {
+        auto found =
+            std::find(rules_.begin(), rules_.end(), original->name) != rules_.end();
+        auto opt = mode_ ? !found : found;
+
+        if (opt && original->nodes.size() == 1) {
+            auto child = optimize(original->nodes[0], parent);
+            auto ast = std::make_shared<T>(*child, original->name.data(),
+                original->choice_count, original->position,
+                original->length, original->choice);
+            for (auto node : ast->nodes) {
+                node->parent = ast;
+            }
+            return ast;
+        }
+
+        auto ast = std::make_shared<T>(*original);
+        ast->parent = parent;
+        ast->nodes.clear();
+        for (auto node : original->nodes) {
+            auto child = optimize(node, ast);
+            ast->nodes.push_back(child);
+        }
+        return ast;
+    }
+
+private:
+    const bool mode_;
+    const std::vector<std::string> rules_;
+};
+
+struct EmptyType {};
+using Ast = AstBase<EmptyType>;
+
+typedef shared_ptr<Ast> AstNode;
+vector<AstNode> ast_nodes;
 AstNode root_node;
 AstNode cur_node;
 
@@ -698,7 +811,7 @@ void vsp_ast_push(vsparser_t* p, const char* name, size_t start, size_t end) {
     assert(name);
     size_t line, col;
     vsp_compute_line_and_column((VsParser*)p, start, line, col);
-    auto node = std::make_shared<peg::Ast>("", line, col, name, name, start, end-start);
+    auto node = make_shared<Ast>(line, col, name, start, end - start);
     ast_nodes.push_back(node);
     if (cur_node) {
         node->parent = cur_node;
@@ -733,8 +846,10 @@ void vsp_ast_pop(vsparser_t* p, const char* name, bool succeeded) {
     //printf("\r\n");
 }
 
-std::vector<std::string> get_no_ast_opt_rules() {
-    std::vector<std::string> rules;
+vector<string> get_no_ast_opt_rules() {
+    vector<string> rules = {
+        "attribute_spec",
+    };
     return rules;
 }
 
@@ -751,9 +866,9 @@ int main() {
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
-    root_node = peg::AstOptimizer(true, get_no_ast_opt_rules()).optimize(root_node);
-    std::cout << "--------------------------------------------------" << std::endl;
-    std::cout << peg::ast_to_s(root_node);
+    root_node = AstOptimizer(true, get_no_ast_opt_rules()).optimize(root_node);
+    cout << "--------------------------------------------------" << endl;
+    cout << ast_to_s(root_node);
 
     return 0;
 }

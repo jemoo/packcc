@@ -294,6 +294,7 @@ typedef struct generate_tag {
     const node_t *rule;
     int label;
     int scope;
+    int term_mode;
     bool_t ascii;
 } generate_t;
 
@@ -2675,7 +2676,8 @@ static void ast__expr_name(stream_t* stream, const node_t* expr, int root) {
     case NODE_RULE:
         break;
     case NODE_REFERENCE:
-        stream__printf(stream, ", \"%s\"", expr->data.reference.name);
+        stream__printf(stream, ", \"%s\"", expr->data.reference.var ?
+            expr->data.reference.var : expr->data.reference.name);
         break;
     case NODE_STRING:
     case NODE_CHARCLASS:
@@ -3457,9 +3459,11 @@ static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfai
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
-    stream__puts(gen->stream, "PCC_AST_INFO(chunk");
-    ast__expr_name(gen->stream, expr, 0);
-    stream__printf(gen->stream, ", p%d, q%d);\n", gen->scope, gen->scope);
+    if (!gen->term_mode) {
+        stream__puts(gen->stream, "PCC_AST_INFO(chunk");
+        ast__expr_name(gen->stream, expr, 0);
+        stream__printf(gen->stream, ", p%d, q%d);\n", gen->scope, gen->scope);
+    }
     if (!bare) {
         gen->scope--;
         indent -= 4;
@@ -4917,6 +4921,7 @@ static bool_t generate(context_t *ctx) {
                 const char* rule_name = ctx->rules.buf[i]->data.rule.name;
                 int term_mode = (rule_name[0] >= 'A' && rule_name[0] <= 'Z') ||
                                 (rule_name[0] == '_' && rule_name[1] == 0);
+                g.term_mode = term_mode;
 
                 stream__printf(
                     &sstream,

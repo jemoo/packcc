@@ -61,28 +61,29 @@ top_level_declaration
     ;
 
 module_clause
-    : attribute_list? KW_MODULE module_identifier
+    : attributes? KW_MODULE module_identifier
     ;
 
 module_identifier
     : IDENTIFIER
     ;
 
+attributes
+    : attribute_section+
+    ;
+
+attribute_section
+    : '[' attribute_list ']'
+    ;
+
 attribute_list
-    : attribute_declaration+
+    : attribute ( ',' attribute )*
     ;
 
-attribute_declaration
-    : '[' attribute_spec_list ']'
-    ;
-
-attribute_spec_list
-    : attribute_spec ( ',' attribute_spec )*
-    ;
-
-attribute_spec
+attribute
     : KW_IF IDENTIFIER '?'?
-    | ( KW_UNSAFE | IDENTIFIER ) ( ':' ( string_literal | IDENTIFIER ) )?
+    | ( KW_UNSAFE )
+    | attribute_name=IDENTIFIER ( ':' ( string_literal | IDENTIFIER ) )?
     | interpreted_string_literal
     ;
 
@@ -103,7 +104,7 @@ import_symbol_list
     ;
 
 type_declaration
-    : attribute_list? KW_PUBLIC? KW_TYPE type_identifier generic_names? '=' sum_type_list
+    : attributes? KW_PUBLIC? KW_TYPE type_identifier generic_names? '=' sum_type_list
     ;
 
 sum_type_list
@@ -111,7 +112,7 @@ sum_type_list
     ;
 
 struct_declaration
-    : attribute_list? KW_PUBLIC? ( KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM )
+    : attributes? KW_PUBLIC? ( KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM )
         IDENTIFIER generic_names? ( ':' super_type_list )? '{' struct_member_list? '}'
     ;
 
@@ -192,8 +193,8 @@ struct_member_declaration
     ;
 
 field_declaration
-    : attribute_list? KW_PUBLIC? ( KW_CONST | KW_LET | KW_VAR ) ( field_specifier_list | field_specifier )
-    | attribute_list? KW_PUBLIC? field_specifier
+    : attributes? KW_PUBLIC? ( KW_CONST | KW_LET | KW_VAR ) ( field_specifier_list | field_specifier )
+    | attributes? KW_PUBLIC? field_specifier
     ;
 
 field_specifier_list
@@ -209,7 +210,7 @@ field_identifier
     ;
 
 function_declaration
-    : attribute_list? KW_PUBLIC? KW_CONST? 
+    : attributes? KW_PUBLIC? KW_CONST? 
         ( KW_FUNCTION? IDENTIFIER generic_names? function_signature ) block?
     ;
 
@@ -348,14 +349,14 @@ void vsp_ast_push(vsparser_t *p, const char* name, size_t start, size_t end);
 void vsp_ast_pop(vsparser_t *p, const char* name, bool succeeded);
 
 void vsp_ast_dump(vsparser_t *p, const pcc_thunk_t* thunk) {
+    const char *name = thunk->ast_info.name;
+    if (!name) {
+        return;
+    }
     if (thunk->type == PCC_THUNK_NODE) {
-        const char *name = thunk->ast_info.name;
         vsp_ast_push(p, name, thunk->ast_info.start, thunk->ast_info.end);
-        bool term = name[0] >= 'A' && name[0] <= 'Z';
-        if (!term) {
-            for (size_t i = 0; i < thunk->data.node.thunks->len; i++) {
-                vsp_ast_dump(p, thunk->data.node.thunks->buf[i]);
-            }
+        for (size_t i = 0; i < thunk->data.node.thunks->len; i++) {
+            vsp_ast_dump(p, thunk->data.node.thunks->buf[i]);
         }
         vsp_ast_pop(p, name, true);
     }
