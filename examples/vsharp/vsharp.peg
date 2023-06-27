@@ -1,6 +1,5 @@
 %prefix "vsharp"
 
-%value "vsp_pos_t"
 %auxil "vsparser_t *"
 
 %header {
@@ -23,8 +22,7 @@ typedef vsharp_context_t pcc_context_t;
 int vsp_getchar(vsparser_t* p);
 void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
 void vsp_error(vsparser_t *p);
-int vsp_whitespace(vsparser_t *p, int action);
-void vsp_eat_whitespace(pcc_context_t *ctx);
+void vsp_whitespace(pcc_context_t *ctx, struct pcc_thunk_chunk_tag *chunk);
 
 #ifdef __cplusplus
 }
@@ -39,46 +37,22 @@ void vsp_eat_whitespace(pcc_context_t *ctx);
 #define PCC_ERROR(auxil)\
         vsp_error(auxil)
 
-#define PCC_INVOKE(callback, ...)\
-    if (auxil->il.callback)\
-        auxil->il.callback(auxil, ##__VA_ARGS__)
-
-#define VPOS(num)\
-    vsp_pos(auxil, _##num##s, _##num##e)
-
-#define VRANGE(start, end)\
-    vsp_pos(auxil, _##start##s, _##end##e)
-
-#define NPOS()\
-    vsp_pos(auxil, 0, 0)
-
-#define EMPTY(num)\
-    (_##num##e <= _##num##s)
-
-#ifndef TRUE
-#define TRUE    1
-#define FALSE   0
-
-    /*{ if (pcc_apply_rule(ctx, pcc_evaluate_rule__, &chunk->thunks, NULL)) pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, chunk->thunks.len-1); }*/
+#define PCC_WHITESPACE(CTX, CHUNK)\
+        if (CTX->term_mode == 0) vsp_whitespace(CTX, CHUNK)
 
 void vsp_ast_embed(struct pcc_thunk_chunk_tag* chunk, int num, ...);
 void vsp_ast_chose(struct pcc_thunk_chunk_tag* chunk, int index);
-void vsp_ast_match(struct pcc_thunk_chunk_tag* chunk, const char *name);
+void vsp_ast_match(struct pcc_thunk_chunk_tag* chunk, const char *name, ...);
 void vsp_ast_gen(const struct pcc_thunk_array_tag *thunks);
 #define PCC_AST_EMBED(CHUNK, ...)  vsp_ast_embed(CHUNK, __VA_ARGS__)
 #define PCC_AST_CHOSE(CHUNK, INDEX) vsp_ast_chose(CHUNK, INDEX)
-#define PCC_AST_MATCH(CHUNK, NAME)  vsp_ast_match(CHUNK, NAME)
+#define PCC_AST_MATCH(CHUNK, NAME, ...)  vsp_ast_match(CHUNK, NAME, ##__VA_ARGS__)
 #define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(THUNKS)
-#define PCC_WHITESPACE(CTX, ACTION) {\
-    if (vsp_whitespace(CTX->auxil, ACTION)) vsp_eat_whitespace(CTX);\
-}
-
-#endif
 
 }
 
 compilation_unit
-    : top_level_declaration* EOF
+    : top_level_declaration* EOF _
     ;
 
 top_level_declaration
@@ -91,8 +65,7 @@ top_level_declaration
     ;
 
 module_clause
-    : attribute_list?
-        <KW_MODULE> <module_identifier>               { PCC_INVOKE(on_module_clause, VPOS(1), VPOS(2)); }
+    : attribute_list? KW_MODULE module_identifier
     ;
 
 module_identifier
@@ -108,8 +81,7 @@ attribute_declaration
     ;
 
 attribute_spec_list
-    : attribute_spec_list ',' attribute_spec
-    | attribute_spec
+    : attribute_spec ( ',' attribute_spec )*
     ;
 
 attribute_spec
@@ -123,53 +95,36 @@ interpreted_string_literal
     ;
 
 import_declaration
-    : KW_IMPORT module_name                       #{ PCC_INVOKE(enter_import_declaration, VPOS(1), VPOS(2)); }
-      ( ( KW_AS IDENTIFIER                      #{ PCC_INVOKE(on_import_alias, VPOS(3), VPOS(4)); }
-      | '{' import_symbol_list '}' ) )?             #{ PCC_INVOKE(exit_import_declaration); }
+    : KW_IMPORT module_name ( KW_AS IDENTIFIER | '{' import_symbol_list '}' )?
     ;
 
 module_name
-    : module_name TOK_DOT IDENTIFIER                  #{ PCC_INVOKE(on_import_module_name, VPOS(1), TRUE); }
-    | IDENTIFIER                                        #{ PCC_INVOKE(on_import_module_name, VPOS(0), FALSE); }
-    ;
-
-TOK_DOT
-    : '.'
+    : IDENTIFIER ( '.' IDENTIFIER )*
     ;
 
 import_symbol_list
-    : import_symbol_list _ ',' _ <IDENTIFIER>           { PCC_INVOKE(on_import_symbol, VPOS(1)); }
-    | IDENTIFIER                                        { PCC_INVOKE(on_import_symbol, VPOS(0)); }
+    : IDENTIFIER ( ',' IDENTIFIER )*
     ;
 
 type_declaration
-    : ( attribute_list _ )? ( KW_PUBLIC _ )?
-        <KW_TYPE> _ <type_identifier>                   { PCC_INVOKE(enter_type_declaration, VPOS(1), VPOS(2)); }
-        ( _ <generic_names> )?                          { if (!EMPTY(3)) { PCC_INVOKE(on_type_decl_generic_names, VPOS(3)); } }
-        _ '=' _ <sum_type_list>                         { PCC_INVOKE(exit_type_declaration, VPOS(4)); }
+    : attribute_list? KW_PUBLIC? KW_TYPE type_identifier generic_names? '=' sum_type_list
     ;
 
 sum_type_list
-    : sum_type_list _ '|' _ type
-    | type
+    : type ( '|' type )*
     ;
 
 struct_declaration
-    : ( attribute_list _ )? ( KW_PUBLIC _ )?
-        < KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM >
-        _ <IDENTIFIER>                                  { PCC_INVOKE(enter_struct_declaration, VPOS(1), VPOS(2)); }
-        ( _ <generic_names> )?                          { if (!EMPTY(3)) { PCC_INVOKE(on_struct_generic_names, VPOS(3)); } }
-        ( _ ':' _ super_type_list )?
-        _ '{' _ ( struct_member_list _ )? '}'           { PCC_INVOKE(exit_struct_declaration, VPOS(0)); }
+    : attribute_list? KW_PUBLIC? ( KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM )
+        IDENTIFIER generic_names? ( ':' super_type_list )? '{' struct_member_list? '}'
     ;
 
 generic_names
-    : '<' _ generic_name_list _ '>'                     { $$=VPOS(0); }
+    : '<' generic_name_list '>'
     ;
 
 generic_name_list
-    : generic_name_list _ ',' _ <generic_name>          { PCC_INVOKE(on_generic_name, VPOS(1)); }
-    | generic_name                                      { PCC_INVOKE(on_generic_name, VPOS(0)); }
+    : generic_name ( ',' generic_name )*
     ;
 
 generic_name
@@ -177,14 +132,11 @@ generic_name
     ;
 
 type
-    : simple_type ( _ <'&'> )? ( _ <'?'> )?             { $$=VPOS(0);
-                                                          PCC_INVOKE(on_type_reference, VPOS(0), VPOS(1));
-                                                          PCC_INVOKE(on_type_nullable, VPOS(0), VPOS(2)); }
+    : simple_type '&'? '?'?
     ;
 
 super_type_list
-    : super_type_list _ ',' _ super_type                { PCC_INVOKE(on_struct_super_type, TRUE); }
-    | super_type                                        { PCC_INVOKE(on_struct_super_type, FALSE); }
+    : super_type ( ',' super_type )*
     ;
 
 super_type
@@ -194,16 +146,15 @@ super_type
     ;
 
 generic_type
-    : ( qualified_type | type_identifier )              { PCC_INVOKE(enter_generic_type); }
-        _ '<' _ type_list _ '>'                         { PCC_INVOKE(exit_generic_type); }
+    : ( qualified_type | type_identifier ) '<' type_list '>'
     ;
 
 qualified_type
-    : <type_identifier> _ '.' _ <type_identifier>       { PCC_INVOKE(on_named_type, VPOS(1), VPOS(2)); }
+    : type_identifier '.' type_identifier
     ;
 
 type_identifier
-    : IDENTIFIER                                        { PCC_INVOKE(on_named_type, NPOS(), VPOS(0)); }
+    : IDENTIFIER
     ;
 
 simple_type
@@ -216,32 +167,27 @@ simple_type
     ;
 
 pointer_type
-    : simple_type _ <'*'>                               { PCC_INVOKE(on_type_pointer, VPOS(0), VPOS(1)); }
+    : simple_type '*'
     ;
 
 function_type
-    : KW_FUNCTION                                       { PCC_INVOKE(enter_function_type); }
-        _ function_type_signature                       { PCC_INVOKE(exit_function_type, VPOS(0)); }
+    : KW_FUNCTION function_type_signature
     ;
 
 function_type_signature
-    : '(' _ ( type_list _ )? ')'                        { PCC_INVOKE(on_function_type_parameters); }
-        ( _ ':' _ type )?                               { PCC_INVOKE(on_function_type_return_type, type); }
+    : '(' type_list? ')' ( ':' type )?
     ;
 
 tuple_type
-    :                                                   { PCC_INVOKE(enter_tuple_type); }
-        '(' _ type_list _ ')'                           { PCC_INVOKE(exit_tuple_type, VPOS(0)); }
+    : '(' type_list ')'
     ;
 
 type_list
-    : type_list _ ',' _ type                            { PCC_INVOKE(on_type_list_item, TRUE); }
-    | type                                              { PCC_INVOKE(on_type_list_item, FALSE); }
+    : type ( ',' type )*
     ;
 
 struct_member_list
-    : struct_member_list _ struct_member_declaration
-    | struct_member_declaration
+    : struct_member_declaration+
     ;
 
 struct_member_declaration
@@ -250,19 +196,16 @@ struct_member_declaration
     ;
 
 field_declaration
-    : ( attribute_list _ )? ( KW_PUBLIC _ )?
-        < KW_CONST | KW_LET | KW_VAR > _                { PCC_INVOKE(enter_field_declaration, VPOS(1)); }
-        ( field_specifier_list | field_specifier )      { PCC_INVOKE(exit_field_declaration); }
-    | ( attribute_list _ )? ( KW_PUBLIC _ )?            { PCC_INVOKE(enter_field_declaration, NPOS()); }
-        field_specifier                                 { PCC_INVOKE(exit_field_declaration); }
+    : attribute_list? KW_PUBLIC? ( KW_CONST | KW_LET | KW_VAR ) ( field_specifier_list | field_specifier )
+    | attribute_list? KW_PUBLIC? field_specifier
     ;
 
 field_specifier_list
-    : '{' _ ( field_specifier _ )* '}'
+    : '{' field_specifier* '}'
+    ;
 
 field_specifier
-    : <field_identifier> _ ':' _ <type> ( _ '=' _ <expression> )?
-                                                        { PCC_INVOKE(on_field_specifier, VPOS(0), VPOS(1), VPOS(2), VPOS(3)); }
+    : field_identifier ':' type ( '=' expression )?
     ;
 
 field_identifier
@@ -270,40 +213,34 @@ field_identifier
     ;
 
 function_declaration
-    : ( attribute_list _ )? ( KW_PUBLIC _ )? ( KW_CONST _ )? 
-        < ( KW_FUNCTION _ )? IDENTIFIER _ ( generic_names _ )?
-                                                        { PCC_INVOKE(enter_function_declaration, KW_CONST, KW_FUNCTION, IDENTIFIER, generic_names); }
-        function_signature > ( _ block )?               { PCC_INVOKE(exit_function_declaration, VPOS(1)); }
+    : attribute_list? KW_PUBLIC? KW_CONST? 
+        ( KW_FUNCTION? IDENTIFIER generic_names? function_signature ) block?
     ;
 
 function_signature
-    : '(' _ ( parameter_list _ )? ')'
-        ( _ ':' _ type )?                               { $$=VPOS(0); PCC_INVOKE(on_function_signature, VPOS(0), type); }
+    : '(' parameter_list? ')' ( ':' type )?
     ;
 
 parameter_list
-    : parameter_list _ ',' _ parameter_declaration
-    | parameter_declaration
+    : parameter_declaration ( ',' parameter_declaration )*
     ;
 
 parameter_declaration
-    : ( KW_CONST _ )? IDENTIFIER
-        _ ':' _ parameter_type                          { $$=VPOS(0); PCC_INVOKE(on_function_parameter, VPOS(0), KW_CONST, IDENTIFIER, parameter_type); }
+    : KW_CONST? IDENTIFIER ':' parameter_type
     ;
 
 parameter_type
-    : type ( _ '...' )?                                 { $$=VPOS(0); }
+    : type '...'?
     ;
 
 # -------------------- Statements ------------------------------
 
 block
-    : '{' _ ( statement_list _ )? '}'
+    : '{' statement_list? '}'
     ;
 
 statement_list
-    : statement_list _ statement
-    | statement
+    : statement+
     ;
 
 statement
@@ -343,9 +280,11 @@ keywords
     : KW_MODULE | KW_IMPORT | KW_AS
     ;
 
+# -------------------- Terminals ------------------------------
+
 IDENTIFIER
-    : BASIC_IDENTIFIER                                  { $$=VPOS(0); }
-    | '@' keywords                                      { $$=VPOS(0); }
+    : BASIC_IDENTIFIER
+    | '@' keywords
     ;
 
 BASIC_IDENTIFIER
@@ -363,9 +302,9 @@ KW_UNION        : 'union'           ~LD
 KW_CLASS        : 'class'           ~LD
 KW_INTERFACE    : 'interface'       ~LD
 KW_ENUM         : 'enum'            ~LD
-KW_FUNCTION     : 'function'        ~LD                 { $$=VPOS(0); }
-KW_TYPE         : 'type'            ~LD                 { $$=VPOS(0); }
-KW_CONST        : 'const'           ~LD                 { $$=VPOS(0); }
+KW_FUNCTION     : 'function'        ~LD
+KW_TYPE         : 'type'            ~LD
+KW_CONST        : 'const'           ~LD
 KW_LET          : 'let'             ~LD
 KW_VAR          : 'var'             ~LD
 KW_TRUE         : 'true'            ~LD
@@ -419,7 +358,7 @@ void vsp_ast_chose(pcc_thunk_chunk_t* chunk, int index) {
     chunk->ast_info.chose = index;
 }
 
-void vsp_ast_match(pcc_thunk_chunk_t* chunk, const char *name) {
+void vsp_ast_match(pcc_thunk_chunk_t* chunk, const char *name, ...) {
     chunk->ast_info.name = name;
 }
 
@@ -429,9 +368,6 @@ void vsp_ast_pop(const char* name, bool succeeded);
 void vsp_ast_dump(const pcc_thunk_t* thunk) {
     if (thunk->type == PCC_THUNK_NODE) {
         const char *name = thunk->ast_info.chunk_info.name;
-        if (name == "_") {
-            return;
-        }
         vsp_ast_push(name);
         bool term = name[0] >= 'A' && name[0] <= 'Z';
         if (!term) {
@@ -449,7 +385,11 @@ void vsp_ast_gen(const pcc_thunk_array_t *thunks) {
     }
 }
 
-void vsp_eat_whitespace(pcc_context_t *ctx) {
+void vsp_whitespace(pcc_context_t *ctx, pcc_thunk_chunk_t *chunk) {
+    if (pcc_apply_rule(ctx, pcc_evaluate_rule__, &chunk->thunks, NULL)) {
+        pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, chunk->thunks.len-1);
+        return;
+    }
 
     for (;;) {
         if (pcc_refill_buffer(ctx, 2) == 2) {

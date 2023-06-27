@@ -2075,10 +2075,10 @@ static node_t *parse_primary(context_t *ctx, node_t *rule) {
             s = ctx->bufcur;
             match_spaces(ctx);
         }
-        else if ((q-p) > 1 || ctx->buffer.buf[p] != '_') {
-            r = p;
-            s = q;
-        }
+        //else if ((q-p) > 1 || ctx->buffer.buf[p] != '_') {
+        //    r = p;
+        //    s = q;
+        //}
         if (match_character(ctx, ':')) goto EXCEPTION;
         n_p = create_node(NODE_REFERENCE);
         if (r == VOID_VALUE) {
@@ -2670,6 +2670,65 @@ static void ast__print(const ast_loc_t* ast_loc, stream_t* stream, size_t indent
     stream__puts(stream, ");\n");
 }
 
+static void ast__expr_name(stream_t* stream, node_t* expr, int root) {
+    switch (expr->type) {
+    case NODE_RULE:
+        break;
+    case NODE_REFERENCE:
+        stream__printf(stream, ", \"%s\"", expr->data.reference.name);
+        break;
+    case NODE_STRING:
+    case NODE_CHARCLASS:
+        stream__puts(stream, ", \"STRING\"");
+        break;
+    case NODE_QUANTITY:
+        if (root) {
+            ast__expr_name(stream, expr->data.quantity.expr, 0);
+        }
+        else {
+            stream__puts(stream, ", \"QUANTITY\"");
+        }
+        break;
+    case NODE_PREDICATE:
+        stream__puts(stream, ", \"PREDICATE\"");
+        break;
+    case NODE_SEQUENCE:
+        if (root) {
+            size_t i;
+            for (i = 0; i < expr->data.sequence.nodes.len; i++) {
+                ast__expr_name(stream, expr->data.sequence.nodes.buf[i], 0);
+            }
+        }
+        else {
+            stream__puts(stream, ", \"SEQUENCE\"");
+        }
+        break;
+    case NODE_ALTERNATE:
+        stream__puts(stream, ", \"ALTERNATE\"");
+        break;
+    case NODE_CAPTURE:
+        if (root) {
+            ast__expr_name(stream, expr->data.capture.expr, 0);
+        }
+        else {
+            stream__puts(stream, ", \"CAPTURE\"");
+        }
+        break;
+    case NODE_EXPAND:
+        break;
+    case NODE_ACTION:
+        break;
+    case NODE_ERROR:
+        break;
+    }
+}
+
+static void ast__match(stream_t* stream, const char *name, node_t* expr) {
+    stream__printf(stream, "    PCC_AST_MATCH(chunk, \"%s\"", name);
+    ast__expr_name(stream, expr, 1);
+    stream__printf(stream, ", 0); \n");
+}
+
 static code_reach_t generate_matching_string_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     const size_t n = (value != NULL) ? strlen(value) : 0;
     if (n > 0) {
@@ -2906,6 +2965,8 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__printf(gen->stream, "for (i = 0; i < %d; i++) {\n", max);
         gen->scope++;
         stream__write_characters(gen->stream, ' ', indent + 4);
+        stream__puts(gen->stream, "PCC_WHITESPACE(ctx, chunk);\n");
+        stream__write_characters(gen->stream, ' ', indent + 4);
         stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
         stream__write_characters(gen->stream, ' ', indent + 4);
         stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
@@ -2965,6 +3026,8 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
                 indent += 4;
                 gen->scope++;
             }
+            stream__write_characters(gen->stream, ' ', indent);
+            stream__puts(gen->stream, "PCC_WHITESPACE(ctx, chunk);\n");
             stream__write_characters(gen->stream, ' ', indent);
             stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
             stream__write_characters(gen->stream, ' ', indent);
@@ -3071,6 +3134,8 @@ static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t
     code_reach_t r;
     int ast_index = ast__push(ast_loc);
     for (i = 0; i < nodes->len; i++) {
+        stream__write_characters(gen->stream, ' ', indent);
+        stream__puts(gen->stream, "PCC_WHITESPACE(ctx, chunk);\n");
         ast__seti(ast_loc, ast_index, i);
         int ast_times = ast_loc->times;
         r = generate_code(gen, nodes->buf[i], onfail, indent, FALSE, ast_loc);
@@ -3105,6 +3170,8 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
         indent += 4;
         gen->scope++;
     }
+    stream__write_characters(gen->stream, ' ', indent);
+    stream__puts(gen->stream, "PCC_WHITESPACE(ctx, chunk);\n");
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
@@ -3718,6 +3785,7 @@ static bool_t generate(context_t *ctx) {
             "    size_t pos; /* the position in the input of the first character currently buffered */\n"
             "    size_t cur; /* the current parsing position in the character buffer */\n"
             "    size_t level;\n"
+            "    size_t term_mode;\n"
             "    pcc_char_array_t buffer;\n"
             "    pcc_lr_table_t lrtable;\n"
             "    pcc_lr_stack_t lrstack;\n"
@@ -4433,6 +4501,7 @@ static bool_t generate(context_t *ctx) {
             "    ctx->pos = 0;\n"
             "    ctx->cur = 0;\n"
             "    ctx->level = 0;\n"
+            "    ctx->term_mode = 0;\n"
             "    pcc_char_array__init(auxil, &ctx->buffer);\n"
             "    pcc_lr_table__init(auxil, &ctx->lrtable);\n"
             "    pcc_lr_stack__init(auxil, &ctx->lrstack);\n"
@@ -4819,6 +4888,11 @@ static bool_t generate(context_t *ctx) {
                 g.label = 0;
                 g.scope = 0;
                 g.ascii = ctx->opts.ascii;
+
+                const char* rule_name = ctx->rules.buf[i]->data.rule.name;
+                int term_mode = (rule_name[0] >= 'A' && rule_name[0] <= 'Z') ||
+                                (rule_name[0] == '_' && rule_name[1] == 0);
+
                 stream__printf(
                     &sstream,
                     "static pcc_thunk_chunk_t *pcc_evaluate_rule_%s(pcc_context_t *ctx) {\n",
@@ -4829,8 +4903,10 @@ static bool_t generate(context_t *ctx) {
                     "    pcc_thunk_chunk_t *const chunk = pcc_thunk_chunk__create(ctx);\n"
                     "    chunk->pos = ctx->cur;\n"
                     "    PCC_DEBUG(ctx->auxil, PCC_DBG_EVALUATE, \"%s\", ctx->level, chunk->pos, (ctx->buffer.buf + chunk->pos), (ctx->buffer.len - chunk->pos));\n"
-                    "    ctx->level++;\n",
-                    ctx->rules.buf[i]->data.rule.name
+                    "    ctx->level++;\n"
+                    "%s",
+                    ctx->rules.buf[i]->data.rule.name,
+                    term_mode ? "    ctx->term_mode++;\n" : ""
                 );
                 stream__printf(
                     &sstream,
@@ -4851,25 +4927,26 @@ static bool_t generate(context_t *ctx) {
                 ast_loc_t ast_loc;
                 memset(&ast_loc, 0, sizeof(ast_loc));
                 r = generate_code(&g, ctx->rules.buf[i]->data.rule.expr, 0, 4, FALSE, &ast_loc);
-                stream__printf(
-                    &sstream, "    PCC_AST_MATCH(chunk, \"%s\");\n",
-                    ctx->rules.buf[i]->data.rule.name
-                );
+                ast__match(&sstream, ctx->rules.buf[i]->data.rule.name, ctx->rules.buf[i]->data.rule.expr);
                 stream__printf(
                     &sstream,
+                    "%s"
                     "    ctx->level--;\n"
                     "    PCC_DEBUG(ctx->auxil, PCC_DBG_MATCH, \"%s\", ctx->level, chunk->pos, (ctx->buffer.buf + chunk->pos), (ctx->cur - chunk->pos));\n"
                     "    return chunk;\n",
+                    term_mode ? "    ctx->term_mode--;\n" : "",
                     ctx->rules.buf[i]->data.rule.name
                 );
                 if (r != CODE_REACH__ALWAYS_SUCCEED) {
                     stream__printf(
                         &sstream,
                         "L0000:;\n"
+                        "%s"
                         "    ctx->level--;\n"
                         "    PCC_DEBUG(ctx->auxil, PCC_DBG_NOMATCH, \"%s\", ctx->level, chunk->pos, (ctx->buffer.buf + chunk->pos), (ctx->cur - chunk->pos));\n"
                         "    pcc_thunk_chunk__destroy(ctx, chunk);\n"
                         "    return NULL;\n",
+                        term_mode ? "    ctx->term_mode--;\n" : "",
                         ctx->rules.buf[i]->data.rule.name
                     );
                 }

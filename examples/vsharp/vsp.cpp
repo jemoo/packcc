@@ -57,8 +57,6 @@ struct VsParser {
     size_t rp;
     int indent;
     vector<size_t> lines;
-    uintmax_t wsm;
-    int nwsm;
 
     struct {
         vsp_pos_t import_pos;
@@ -197,35 +195,13 @@ vsp_pos_t vsp_pos(vsparser_t* p, size_t start, size_t end) {
 
 void vsp_debug(VsParser* p, int event, const char* rule, int level, size_t pos, const char* buffer, int length) {
 #ifndef VSP_LIB
-    static const char* dbg_str[] = { "Evaluating rule", "Matched rule", "Abandoning rule" };
-    fprintf(stderr, "%*s%s %s @%zu [%.*s]\n", level * 2, "", dbg_str[event], rule, pos, length, buffer);
+    //static const char* dbg_str[] = { "Evaluating rule", "Matched rule", "Abandoning rule" };
+    //fprintf(stderr, "%*s%s %s @%zu [%.*s]\n", level * 2, "", dbg_str[event], rule, pos, length, buffer);
 #endif
 }
 
 void vsp_error(VsParser* p) {
     fprintf(stderr, "Syntax error\n");
-}
-
-int vsp_whitespace(VsParser* p, int action) {
-    switch (action) {
-    case 0:
-        p->nwsm++;
-        p->wsm <<= 1;
-        assert(p->nwsm < 64);
-        return 0;
-    case 1:
-        p->nwsm++;
-        p->wsm <<= 1;
-        p->wsm |= 1;
-        assert(p->nwsm < 64);
-        return 0;
-    case 2:
-        p->nwsm--;
-        p->wsm >>= 1;
-        assert(p->nwsm >= 0);
-        return 0;
-    }
-    return p->wsm & 0x1;
 }
 
 #ifdef __cplusplus
@@ -759,8 +735,6 @@ int main() {
     if (vsp_readfile(&p, "./tests/vsharp.vs") != 0)
         return 1;
 
-    p.wsm = 1;
-    p.nwsm = 1;
     p.base.el = nullptr;
     vsp_init_listener(&p.base.il);
     vsp_clear_type_specs(&p);
