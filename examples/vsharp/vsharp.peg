@@ -18,9 +18,13 @@
 extern "C" {
 #endif
 
+typedef vsharp_context_t pcc_context_t;
+
 int vsp_getchar(vsparser_t* p);
 void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
 void vsp_error(vsparser_t *p);
+int vsp_whitespace(vsparser_t *p, int action);
+void vsp_eat_whitespace(pcc_context_t *ctx);
 
 #ifdef __cplusplus
 }
@@ -55,6 +59,8 @@ void vsp_error(vsparser_t *p);
 #define TRUE    1
 #define FALSE   0
 
+    /*{ if (pcc_apply_rule(ctx, pcc_evaluate_rule__, &chunk->thunks, NULL)) pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, chunk->thunks.len-1); }*/
+
 void vsp_ast_embed(struct pcc_thunk_chunk_tag* chunk, int num, ...);
 void vsp_ast_chose(struct pcc_thunk_chunk_tag* chunk, int index);
 void vsp_ast_match(struct pcc_thunk_chunk_tag* chunk, const char *name);
@@ -63,12 +69,16 @@ void vsp_ast_gen(const struct pcc_thunk_array_tag *thunks);
 #define PCC_AST_CHOSE(CHUNK, INDEX) vsp_ast_chose(CHUNK, INDEX)
 #define PCC_AST_MATCH(CHUNK, NAME)  vsp_ast_match(CHUNK, NAME)
 #define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(THUNKS)
+#define PCC_WHITESPACE(CTX, ACTION) {\
+    if (vsp_whitespace(CTX->auxil, ACTION)) vsp_eat_whitespace(CTX);\
+}
+
 #endif
 
 }
 
 compilation_unit
-    : ( _ top_level_declaration )* _ EOF
+    : top_level_declaration* EOF
     ;
 
 top_level_declaration
@@ -81,31 +91,30 @@ top_level_declaration
     ;
 
 module_clause
-    : ( attribute_list _ )?
-        <KW_MODULE> _ <module_identifier>               { PCC_INVOKE(on_module_clause, VPOS(1), VPOS(2)); }
+    : attribute_list?
+        <KW_MODULE> <module_identifier>               { PCC_INVOKE(on_module_clause, VPOS(1), VPOS(2)); }
     ;
 
 module_identifier
-    : identifier
+    : IDENTIFIER
     ;
 
 attribute_list
-    : attribute_list _ attribute_declaration
-    | attribute_declaration
+    : attribute_declaration+
     ;
 
 attribute_declaration
-    : '[' _ attribute_spec_list _ ']'
+    : '[' attribute_spec_list ']'
     ;
 
 attribute_spec_list
-    : attribute_spec_list _ ',' _ attribute_spec
+    : attribute_spec_list ',' attribute_spec
     | attribute_spec
     ;
 
 attribute_spec
-    : KW_IF _ identifier ( _ '?' )?
-    | ( KW_UNSAFE | identifier ) ( _ ':' _ ( string_literal | identifier ) )?
+    : KW_IF IDENTIFIER '?'?
+    | ( KW_UNSAFE | IDENTIFIER ) ( ':' ( string_literal | IDENTIFIER ) )?
     | interpreted_string_literal
     ;
 
@@ -114,19 +123,23 @@ interpreted_string_literal
     ;
 
 import_declaration
-    : <KW_IMPORT> _ <module_name>                       { PCC_INVOKE(enter_import_declaration, VPOS(1), VPOS(2)); }
-      ( _ ( <KW_AS> _ <identifier>                      { PCC_INVOKE(on_import_alias, VPOS(3), VPOS(4)); }
-      | '{' _ import_symbol_list _ '}' ) )?             { PCC_INVOKE(exit_import_declaration); }
+    : KW_IMPORT module_name                       #{ PCC_INVOKE(enter_import_declaration, VPOS(1), VPOS(2)); }
+      ( ( KW_AS IDENTIFIER                      #{ PCC_INVOKE(on_import_alias, VPOS(3), VPOS(4)); }
+      | '{' import_symbol_list '}' ) )?             #{ PCC_INVOKE(exit_import_declaration); }
     ;
 
 module_name
-    : module_name _ '.' _ <identifier>                  { PCC_INVOKE(on_import_module_name, VPOS(1), TRUE); }
-    | identifier                                        { PCC_INVOKE(on_import_module_name, VPOS(0), FALSE); }
+    : module_name TOK_DOT IDENTIFIER                  #{ PCC_INVOKE(on_import_module_name, VPOS(1), TRUE); }
+    | IDENTIFIER                                        #{ PCC_INVOKE(on_import_module_name, VPOS(0), FALSE); }
+    ;
+
+TOK_DOT
+    : '.'
     ;
 
 import_symbol_list
-    : import_symbol_list _ ',' _ <identifier>           { PCC_INVOKE(on_import_symbol, VPOS(1)); }
-    | identifier                                        { PCC_INVOKE(on_import_symbol, VPOS(0)); }
+    : import_symbol_list _ ',' _ <IDENTIFIER>           { PCC_INVOKE(on_import_symbol, VPOS(1)); }
+    | IDENTIFIER                                        { PCC_INVOKE(on_import_symbol, VPOS(0)); }
     ;
 
 type_declaration
@@ -144,7 +157,7 @@ sum_type_list
 struct_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )?
         < KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM >
-        _ <identifier>                                  { PCC_INVOKE(enter_struct_declaration, VPOS(1), VPOS(2)); }
+        _ <IDENTIFIER>                                  { PCC_INVOKE(enter_struct_declaration, VPOS(1), VPOS(2)); }
         ( _ <generic_names> )?                          { if (!EMPTY(3)) { PCC_INVOKE(on_struct_generic_names, VPOS(3)); } }
         ( _ ':' _ super_type_list )?
         _ '{' _ ( struct_member_list _ )? '}'           { PCC_INVOKE(exit_struct_declaration, VPOS(0)); }
@@ -160,7 +173,7 @@ generic_name_list
     ;
 
 generic_name
-    : identifier
+    : IDENTIFIER
     ;
 
 type
@@ -190,7 +203,7 @@ qualified_type
     ;
 
 type_identifier
-    : identifier                                        { PCC_INVOKE(on_named_type, NPOS(), VPOS(0)); }
+    : IDENTIFIER                                        { PCC_INVOKE(on_named_type, NPOS(), VPOS(0)); }
     ;
 
 simple_type
@@ -253,13 +266,13 @@ field_specifier
     ;
 
 field_identifier
-    : identifier
+    : IDENTIFIER
     ;
 
 function_declaration
     : ( attribute_list _ )? ( KW_PUBLIC _ )? ( KW_CONST _ )? 
-        < ( KW_FUNCTION _ )? identifier _ ( generic_names _ )?
-                                                        { PCC_INVOKE(enter_function_declaration, KW_CONST, KW_FUNCTION, identifier, generic_names); }
+        < ( KW_FUNCTION _ )? IDENTIFIER _ ( generic_names _ )?
+                                                        { PCC_INVOKE(enter_function_declaration, KW_CONST, KW_FUNCTION, IDENTIFIER, generic_names); }
         function_signature > ( _ block )?               { PCC_INVOKE(exit_function_declaration, VPOS(1)); }
     ;
 
@@ -274,8 +287,8 @@ parameter_list
     ;
 
 parameter_declaration
-    : ( KW_CONST _ )? identifier
-        _ ':' _ parameter_type                          { $$=VPOS(0); PCC_INVOKE(on_function_parameter, VPOS(0), KW_CONST, identifier, parameter_type); }
+    : ( KW_CONST _ )? IDENTIFIER
+        _ ':' _ parameter_type                          { $$=VPOS(0); PCC_INVOKE(on_function_parameter, VPOS(0), KW_CONST, IDENTIFIER, parameter_type); }
     ;
 
 parameter_type
@@ -304,22 +317,13 @@ expression_statement
 # -------------------- Expressions ------------------------------
 
 expression
-    : identifier
+    : IDENTIFIER
     | string_literal
     | integer_literal
     | boolean_literal
     | KW_NULL
     | KW_THIS
     | KW_BASE
-    ;
-
-identifier
-    : basic_identifier                                  { $$=VPOS(0); }
-    | '@' KEYWORDS                                      { $$=VPOS(0); }
-    ;
-
-basic_identifier
-    : LETTER LD*
     ;
 
 string_literal
@@ -333,6 +337,19 @@ integer_literal
 boolean_literal
     : KW_TRUE
     | KW_FALSE
+    ;
+
+keywords
+    : KW_MODULE | KW_IMPORT | KW_AS
+    ;
+
+IDENTIFIER
+    : BASIC_IDENTIFIER                                  { $$=VPOS(0); }
+    | '@' keywords                                      { $$=VPOS(0); }
+    ;
+
+BASIC_IDENTIFIER
+    : LETTER LD*
     ;
 
 KW_MODULE       : 'module'          ~LD
@@ -356,8 +373,6 @@ KW_FALSE        : 'false'           ~LD
 KW_NULL         : 'null'            ~LD
 KW_THIS         : 'this'            ~LD
 KW_BASE         : 'base'            ~LD
-
-KEYWORDS        : KW_MODULE | KW_IMPORT | KW_AS
 
 LETTER          : [a-zA-Zα-ωΑ-Ωµ_]
 DIGIT           : [0-9]
@@ -412,12 +427,60 @@ void vsp_ast_push(const char* name);
 void vsp_ast_pop(const char* name, bool succeeded);
 
 void vsp_ast_dump(const pcc_thunk_t* thunk) {
-    vsp_ast_push(thunk->ast_info.chunk_info.name);
-    vsp_ast_pop(thunk->ast_info.chunk_info.name, true);
+    if (thunk->type == PCC_THUNK_NODE) {
+        const char *name = thunk->ast_info.chunk_info.name;
+        if (name == "_") {
+            return;
+        }
+        vsp_ast_push(name);
+        bool term = name[0] >= 'A' && name[0] <= 'Z';
+        if (!term) {
+            for (size_t i = 0; i < thunk->data.node.thunks->len; i++) {
+                vsp_ast_dump(thunk->data.node.thunks->buf[i]);
+            }
+        }
+        vsp_ast_pop(name, true);
+    }
 }
 
 void vsp_ast_gen(const pcc_thunk_array_t *thunks) {
     if (thunks->len == 1) {
         vsp_ast_dump(thunks->buf[0]);
     }
+}
+
+void vsp_eat_whitespace(pcc_context_t *ctx) {
+
+    for (;;) {
+        if (pcc_refill_buffer(ctx, 2) == 2) {
+            int c0 = (ctx->buffer.buf + ctx->cur)[0];
+            int c1 = (ctx->buffer.buf + ctx->cur)[1];
+            if (c0 == '\r' && c1 == '\n') {
+                ctx->cur += 2;
+                continue;
+            }
+        }
+
+        if (pcc_refill_buffer(ctx, 1) < 1) {
+            break;
+        }
+
+        int c = ctx->buffer.buf[ctx->cur];
+        if (c == 0x000020 ||
+            c == 0x000009 ||
+            c == 0x00000b ||
+            c == 0x00000c ) {
+            ctx->cur += 1;
+            continue;
+        }
+
+        if (c == '\n' || c == '\r') {
+            ctx->cur++;
+            continue;
+        }
+
+        break;
+    }
+
+
 }
