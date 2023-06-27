@@ -133,13 +133,13 @@ void vsp_newline(VsParser* p, size_t pos) {
     p->lines.push_back(pos);
 }
 
-void vsp_compute_line_and_column(VsParser* p, size_t pos, int& line, int& col) {
+void vsp_compute_line_and_column(VsParser* p, size_t pos, size_t& line, size_t& col) {
     auto n = p->lines.size();
     for (auto i = n; i >= 1; i--) {
         auto line_start = p->lines.at(i - 1);
         if (pos >= line_start) {
-            line = (int)(i - 1);
-            col = (int)(pos - line_start);
+            line = i - 1;
+            col = pos - line_start;
             return;
         }
     }
@@ -188,7 +188,9 @@ vsp_pos_t vsp_pos(vsparser_t* p, size_t start, size_t end) {
     else {
         pos.start = (int)start;
         pos.end = (int)end;
-        vsp_compute_line_and_column((VsParser*)p, start, pos.line, pos.col);
+        size_t line, col;
+        vsp_compute_line_and_column((VsParser*)p, start, line, col);
+        pos.line = line, pos.col = col;
     }
     return pos;
 }
@@ -675,6 +677,7 @@ int vsp_readfile(VsParser* p, const char* FileName) {
 
 typedef std::shared_ptr<peg::Ast> AstNode;
 std::vector<AstNode> ast_nodes;
+AstNode root_node;
 AstNode cur_node;
 
 void vsp_print_ast_node(AstNode node) {
@@ -691,13 +694,18 @@ void vsp_print_ast_node(AstNode node) {
     }
 }
 
-void vsp_ast_push(const char* name) {
+void vsp_ast_push(vsparser_t* p, const char* name, size_t start, size_t end) {
     assert(name);
-    auto node = std::make_shared<peg::Ast>("", 0, 0, name, name);
+    size_t line, col;
+    vsp_compute_line_and_column((VsParser*)p, start, line, col);
+    auto node = std::make_shared<peg::Ast>("", line, col, name, name, start, end-start);
     ast_nodes.push_back(node);
     if (cur_node) {
         node->parent = cur_node;
         cur_node->nodes.push_back(node);
+    }
+    else {
+        root_node = node;
     }
     cur_node = node;
     //printf(">> ");
@@ -705,11 +713,11 @@ void vsp_ast_push(const char* name) {
     //printf("\r\n");
 }
 
-void vsp_ast_pop(const char* name, bool succeeded) {
-    assert(name);
-    if (cur_node->name != name) {
-        printf("missmatch: %s %s", name, cur_node->name.c_str());
-    }
+void vsp_ast_pop(vsparser_t* p, const char* name, bool succeeded) {
+    //assert(name);
+    //if (cur_node->name != name) {
+    //    printf("missmatch: %s %s", name, cur_node->name.c_str());
+    //}
     ast_nodes.pop_back();
     if (ast_nodes.empty()) {
         cur_node = nullptr;
@@ -739,15 +747,13 @@ int main() {
     vsp_init_listener(&p.base.il);
     vsp_clear_type_specs(&p);
 
-    vsp_ast_push("root");
-
     vsharp_context_t* ctx = vsharp_create(&p.base);
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
-    cur_node = peg::AstOptimizer(true, get_no_ast_opt_rules()).optimize(cur_node);
+    root_node = peg::AstOptimizer(true, get_no_ast_opt_rules()).optimize(root_node);
     std::cout << "--------------------------------------------------" << std::endl;
-    std::cout << peg::ast_to_s(cur_node);
+    std::cout << peg::ast_to_s(root_node);
 
     return 0;
 }

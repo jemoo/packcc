@@ -40,14 +40,10 @@ void vsp_whitespace(pcc_context_t *ctx, struct pcc_thunk_chunk_tag *chunk);
 #define PCC_WHITESPACE(CTX, CHUNK)\
         if (CTX->term_mode == 0) vsp_whitespace(CTX, CHUNK)
 
-void vsp_ast_embed(struct pcc_thunk_chunk_tag* chunk, int num, ...);
-void vsp_ast_chose(struct pcc_thunk_chunk_tag* chunk, int index);
-void vsp_ast_match(struct pcc_thunk_chunk_tag* chunk, const char *name, ...);
-void vsp_ast_gen(const struct pcc_thunk_array_tag *thunks);
-#define PCC_AST_EMBED(CHUNK, ...)  vsp_ast_embed(CHUNK, __VA_ARGS__)
-#define PCC_AST_CHOSE(CHUNK, INDEX) vsp_ast_chose(CHUNK, INDEX)
-#define PCC_AST_MATCH(CHUNK, NAME, ...)  vsp_ast_match(CHUNK, NAME, ##__VA_ARGS__)
-#define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(THUNKS)
+void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, size_t start, size_t end);
+void vsp_ast_gen(vsparser_t *p, const struct pcc_thunk_array_tag *thunks);
+#define PCC_AST_INFO(CHUNK, NAME, START, END)  vsp_ast_info(CHUNK, NAME, START, END)
+#define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(CTX->auxil, THUNKS)
 
 }
 
@@ -333,7 +329,7 @@ EOF             : ~.
 
 #include <stdarg.h>
 
-void vsp_ast_embed(pcc_thunk_chunk_t* chunk, int num, ...) {
+void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, size_t start, size_t end) {
     if (chunk->thunks.len == 0) {
         return;
     }
@@ -343,84 +339,37 @@ void vsp_ast_embed(pcc_thunk_chunk_t* chunk, int num, ...) {
     }
     chunk->ast_info.last_thunk = thunk;
 
-    va_list valist;
-    va_start(valist, num);
-    for (int i = 0; i < num; i++)
-    {
-        thunk->ast_info.embed[i] = va_arg(valist, int);
-    }
-    va_end(valist);
-
-    thunk->ast_info.num_embed = num;
+    thunk->ast_info.name = name;
+    thunk->ast_info.start = start;
+    thunk->ast_info.end = end;
 }
 
-void vsp_ast_chose(pcc_thunk_chunk_t* chunk, int index) {
-    chunk->ast_info.chose = index;
-}
+void vsp_ast_push(vsparser_t *p, const char* name, size_t start, size_t end);
+void vsp_ast_pop(vsparser_t *p, const char* name, bool succeeded);
 
-void vsp_ast_match(pcc_thunk_chunk_t* chunk, const char *name, ...) {
-    chunk->ast_info.name = name;
-}
-
-void vsp_ast_push(const char* name);
-void vsp_ast_pop(const char* name, bool succeeded);
-
-void vsp_ast_dump(const pcc_thunk_t* thunk) {
+void vsp_ast_dump(vsparser_t *p, const pcc_thunk_t* thunk) {
     if (thunk->type == PCC_THUNK_NODE) {
-        const char *name = thunk->ast_info.chunk_info.name;
-        vsp_ast_push(name);
+        const char *name = thunk->ast_info.name;
+        vsp_ast_push(p, name, thunk->ast_info.start, thunk->ast_info.end);
         bool term = name[0] >= 'A' && name[0] <= 'Z';
         if (!term) {
             for (size_t i = 0; i < thunk->data.node.thunks->len; i++) {
-                vsp_ast_dump(thunk->data.node.thunks->buf[i]);
+                vsp_ast_dump(p, thunk->data.node.thunks->buf[i]);
             }
         }
-        vsp_ast_pop(name, true);
+        vsp_ast_pop(p, name, true);
     }
 }
 
-void vsp_ast_gen(const pcc_thunk_array_t *thunks) {
+void vsp_ast_gen(vsparser_t *p, const pcc_thunk_array_t *thunks) {
     if (thunks->len == 1) {
-        vsp_ast_dump(thunks->buf[0]);
+        thunks->buf[0]->ast_info.name = "root";
+        vsp_ast_dump(p, thunks->buf[0]);
     }
 }
 
 void vsp_whitespace(pcc_context_t *ctx, pcc_thunk_chunk_t *chunk) {
     if (pcc_apply_rule(ctx, pcc_evaluate_rule__, &chunk->thunks, NULL)) {
         pcc_thunk_array__revert(ctx->auxil, &chunk->thunks, chunk->thunks.len-1);
-        return;
     }
-
-    for (;;) {
-        if (pcc_refill_buffer(ctx, 2) == 2) {
-            int c0 = (ctx->buffer.buf + ctx->cur)[0];
-            int c1 = (ctx->buffer.buf + ctx->cur)[1];
-            if (c0 == '\r' && c1 == '\n') {
-                ctx->cur += 2;
-                continue;
-            }
-        }
-
-        if (pcc_refill_buffer(ctx, 1) < 1) {
-            break;
-        }
-
-        int c = ctx->buffer.buf[ctx->cur];
-        if (c == 0x000020 ||
-            c == 0x000009 ||
-            c == 0x00000b ||
-            c == 0x00000c ) {
-            ctx->cur += 1;
-            continue;
-        }
-
-        if (c == '\n' || c == '\r') {
-            ctx->cur++;
-            continue;
-        }
-
-        break;
-    }
-
-
 }

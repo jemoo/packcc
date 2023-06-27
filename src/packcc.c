@@ -2670,7 +2670,7 @@ static void ast__print(const ast_loc_t* ast_loc, stream_t* stream, size_t indent
     stream__puts(stream, ");\n");
 }
 
-static void ast__expr_name(stream_t* stream, node_t* expr, int root) {
+static void ast__expr_name(stream_t* stream, const node_t* expr, int root) {
     switch (expr->type) {
     case NODE_RULE:
         break;
@@ -2948,8 +2948,8 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__puts(gen->stream, "{\n");
             indent += 4;
         }
-        int ast_index = ast__push(ast_loc);
-        ast__sets(ast_loc, ast_index, "i");
+        //int ast_index = ast__push(ast_loc);
+        //ast__sets(ast_loc, ast_index, "i");
         if (min > 0) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "const size_t p0 = ctx->cur;\n");
@@ -2972,11 +2972,11 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
         stream__printf(gen->stream, "const size_t n%d = chunk->thunks.len;\n", gen->scope);
         {
             const int l = ++gen->label;
-            const int ast_times = ast_loc->times;
+            //const int ast_times = ast_loc->times;
             r = generate_code(gen, expr, l, indent + 4, FALSE, ast_loc);
-            if (ast_times == ast_loc->times) {
-                ast__print(ast_loc, gen->stream, indent + 4);
-            }
+            //if (ast_times == ast_loc->times) {
+            //    ast__print(ast_loc, gen->stream, indent + 4);
+            //}
             stream__write_characters(gen->stream, ' ', indent + 4);
             stream__printf(gen->stream, "if (ctx->cur == p%d) break;\n", gen->scope);
             if (r != CODE_REACH__ALWAYS_SUCCEED) {
@@ -3007,7 +3007,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             stream__write_characters(gen->stream, ' ', indent);
             stream__puts(gen->stream, "}\n");
         }
-        ast__pop(ast_loc, ast_index);
+        //ast__pop(ast_loc, ast_index);
         if (!bare) {
             indent -= 4;
             stream__write_characters(gen->stream, ' ', indent);
@@ -3132,16 +3132,16 @@ static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t
     bool_t b = FALSE;
     size_t i;
     code_reach_t r;
-    int ast_index = ast__push(ast_loc);
+    //int ast_index = ast__push(ast_loc);
     for (i = 0; i < nodes->len; i++) {
         stream__write_characters(gen->stream, ' ', indent);
         stream__puts(gen->stream, "PCC_WHITESPACE(ctx, chunk);\n");
-        ast__seti(ast_loc, ast_index, i);
-        int ast_times = ast_loc->times;
+        //ast__seti(ast_loc, ast_index, i);
+        //int ast_times = ast_loc->times;
         r = generate_code(gen, nodes->buf[i], onfail, indent, FALSE, ast_loc);
-        if (ast_times == ast_loc->times) {
-            ast__print(ast_loc, gen->stream, indent);
-        }
+        //if (ast_times == ast_loc->times) {
+        //    ast__print(ast_loc, gen->stream, indent);
+        //}
         switch (r) {
         case CODE_REACH__ALWAYS_FAIL:
             if (i + 1 < nodes->len) {
@@ -3155,7 +3155,7 @@ static code_reach_t generate_sequential_code(generate_t *gen, const node_array_t
             b = TRUE;
         }
     }
-    ast__pop(ast_loc, ast_index);
+    //ast__pop(ast_loc, ast_index);
     return b ? CODE_REACH__BOTH : CODE_REACH__ALWAYS_SUCCEED;
 }
 
@@ -3180,8 +3180,8 @@ static code_reach_t generate_alternative_code(generate_t *gen, const node_array_
         const bool_t c = (i + 1 < nodes->len) ? TRUE : FALSE;
         const int l = ++gen->label;
         r = generate_code(gen, nodes->buf[i], l, indent, FALSE, ast_loc);
-        stream__write_characters(gen->stream, ' ', indent);
-        stream__printf(gen->stream, "PCC_AST_CHOSE(chunk, %d);\n", i);
+        //stream__write_characters(gen->stream, ' ', indent);
+        //stream__printf(gen->stream, "PCC_AST_CHOSE(chunk, %d);\n", i);
         switch (r) {
         case CODE_REACH__ALWAYS_SUCCEED:
             if (c) {
@@ -3382,7 +3382,7 @@ static code_reach_t generate_thunking_error_code(
     return r;
 }
 
-static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
+static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     if (node == NULL) {
         print_error("Internal error [%d]\n", __LINE__);
         exit(-1);
@@ -3402,12 +3402,12 @@ static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfai
             stream__printf(gen->stream, "if (!pcc_apply_rule(ctx, pcc_evaluate_rule_%s, &chunk->thunks, NULL)) goto L%04d;\n",
                 node->data.reference.name, onfail);
         }
-        if (ast_loc->size == 0) {
-            int ast_index = ast__push(ast_loc);
-            ast__seti(ast_loc, ast_index, 0);
-            ast__print(ast_loc, gen->stream, indent);
-            ast__pop(ast_loc, ast_index);
-        }
+        //if (ast_loc->size == 0) {
+        //    int ast_index = ast__push(ast_loc);
+        //    ast__seti(ast_loc, ast_index, 0);
+        //    ast__print(ast_loc, gen->stream, indent);
+        //    ast__pop(ast_loc, ast_index);
+        //}
         return CODE_REACH__BOTH;
     case NODE_STRING:
         return generate_matching_string_code(gen, node->data.string.value, onfail, indent, bare, ast_loc);
@@ -3439,6 +3439,34 @@ static code_reach_t generate_code(generate_t *gen, const node_t *node, int onfai
         print_error("Internal error [%d]\n", __LINE__);
         exit(-1);
     }
+}
+
+static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
+    code_reach_t r;
+    if (!bare) {
+        stream__write_characters(gen->stream, ' ', indent);
+        stream__puts(gen->stream, "{\n");
+        indent += 4;
+        gen->scope++;
+    }
+    stream__write_characters(gen->stream, ' ', indent);
+    stream__printf(gen->stream, "const size_t p%d = ctx->cur;\n", gen->scope);
+    stream__write_characters(gen->stream, ' ', indent);
+    stream__printf(gen->stream, "size_t q%d;\n", gen->scope);
+    r = _generate_code(gen, expr, onfail, indent, FALSE, ast_loc);
+    stream__write_characters(gen->stream, ' ', indent);
+    stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
+    stream__write_characters(gen->stream, ' ', indent);
+    stream__puts(gen->stream, "PCC_AST_INFO(chunk");
+    ast__expr_name(gen->stream, expr, 0);
+    stream__printf(gen->stream, ", p%d, q%d);\n", gen->scope, gen->scope);
+    if (!bare) {
+        gen->scope--;
+        indent -= 4;
+        stream__write_characters(gen->stream, ' ', indent);
+        stream__puts(gen->stream, "}\n");
+    }
+    return r;
 }
 
 static bool_t generate(context_t *ctx) {
@@ -3647,21 +3675,19 @@ static bool_t generate(context_t *ctx) {
             "} pcc_thunk_data_t;\n"
             "\n"
             "typedef struct pcc_ast_chunk_info_tag {\n"
-            "    const char* name;\n"
-            "    int chose;\n"
             "    pcc_thunk_t* last_thunk;\n"
             "} pcc_ast_chunk_info_t;\n"
             "\n"
             "typedef struct pcc_ast_thunk_info_tag {\n"
-            "    pcc_ast_chunk_info_t chunk_info;\n"
-            "    int embed[8];\n"
-            "    int num_embed;\n"
+            "    const char *name;\n"
+            "    size_t start;\n"
+            "    size_t end;\n"
             "} pcc_ast_thunk_info_t;\n"
             "\n"
             "struct pcc_thunk_tag {\n"
             "    pcc_thunk_type_t type;\n"
             "    pcc_thunk_data_t data;\n"
-            "    pcc_ast_thunk_info_tag ast_info;\n"
+            "    pcc_ast_thunk_info_t ast_info;\n"
             "};\n"
             "\n"
             "struct pcc_thunk_array_tag {\n"
@@ -3675,7 +3701,7 @@ static bool_t generate(context_t *ctx) {
             "    pcc_capture_table_t capts;\n"
             "    pcc_thunk_array_t thunks;\n"
             "    size_t pos; /* the starting position in the character buffer */\n"
-            "    pcc_ast_chunk_info_tag ast_info;\n"
+            "    pcc_ast_chunk_info_t ast_info;\n"
             "} pcc_thunk_chunk_t;\n"
             "\n"
             "typedef struct pcc_lr_entry_tag pcc_lr_entry_t;\n"
@@ -4020,13 +4046,12 @@ static bool_t generate(context_t *ctx) {
             "    return thunk;\n"
             "}\n"
             "\n"
-            "static pcc_thunk_t *pcc_thunk__create_node(pcc_auxil_t auxil, const pcc_ast_chunk_info_t *ast_info, const pcc_thunk_array_t *thunks, pcc_value_t *value) {\n"
+            "static pcc_thunk_t *pcc_thunk__create_node(pcc_auxil_t auxil, const pcc_thunk_array_t *thunks, pcc_value_t *value) {\n"
             "    pcc_thunk_t *const thunk = (pcc_thunk_t *)PCC_MALLOC(auxil, sizeof(pcc_thunk_t));\n"
             "    thunk->type = PCC_THUNK_NODE;\n"
             "    thunk->data.node.thunks = thunks;\n"
             "    thunk->data.node.value = value;\n"
             "    memset(&thunk->ast_info, 0, sizeof(thunk->ast_info));\n"
-            "    thunk->ast_info.chunk_info = *ast_info;\n"
             "    return thunk;\n"
             "}\n"
             "\n"
@@ -4720,7 +4745,7 @@ static bool_t generate(context_t *ctx) {
             "    if (c == NULL) return PCC_FALSE;\n"
             "    if (value == NULL) value = &null;\n"
             "    memset(value, 0, sizeof(pcc_value_t)); /* in case */\n"
-            "    pcc_thunk_array__add(ctx->auxil, thunks, pcc_thunk__create_node(ctx->auxil, &c->ast_info, &c->thunks, value));\n"
+            "    pcc_thunk_array__add(ctx->auxil, thunks, pcc_thunk__create_node(ctx->auxil, &c->thunks, value));\n"
             "    return PCC_TRUE;\n"
             "}\n"
             "\n"
@@ -4927,7 +4952,7 @@ static bool_t generate(context_t *ctx) {
                 ast_loc_t ast_loc;
                 memset(&ast_loc, 0, sizeof(ast_loc));
                 r = generate_code(&g, ctx->rules.buf[i]->data.rule.expr, 0, 4, FALSE, &ast_loc);
-                ast__match(&sstream, ctx->rules.buf[i]->data.rule.name, ctx->rules.buf[i]->data.rule.expr);
+                //ast__match(&sstream, ctx->rules.buf[i]->data.rule.name, ctx->rules.buf[i]->data.rule.expr);
                 stream__printf(
                     &sstream,
                     "%s"
