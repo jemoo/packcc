@@ -23,6 +23,8 @@ int vsp_getchar(vsparser_t* p);
 void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
 void vsp_error(vsparser_t *p);
 void vsp_whitespace(pcc_context_t *ctx, struct pcc_thunk_chunk_tag *chunk);
+void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, int term, size_t start, size_t end);
+void vsp_ast_gen(vsparser_t *p, const struct pcc_thunk_array_tag *thunks);
 
 #ifdef __cplusplus
 }
@@ -40,10 +42,11 @@ void vsp_whitespace(pcc_context_t *ctx, struct pcc_thunk_chunk_tag *chunk);
 #define PCC_WHITESPACE(CTX, CHUNK)\
         if (CTX->term_mode == 0) vsp_whitespace(CTX, CHUNK)
 
-void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, size_t start, size_t end);
-void vsp_ast_gen(vsparser_t *p, const struct pcc_thunk_array_tag *thunks);
-#define PCC_AST_INFO(CHUNK, NAME, START, END)  vsp_ast_info(CHUNK, NAME, START, END)
-#define PCC_ACTION(CTX, THUNKS, VALUE)  vsp_ast_gen(CTX->auxil, THUNKS)
+#define PCC_AST_INFO(CHUNK, NAME, TERM, START, END)\
+        vsp_ast_info(CHUNK, NAME, TERM, START, END)
+
+#define PCC_ACTION(CTX, THUNKS, VALUE)\
+        vsp_ast_gen(CTX->auxil, THUNKS)
 
 }
 
@@ -51,9 +54,9 @@ compilation_unit
     : top_level_declaration* EOF _
     ;
 
-top_level_declaration
+fragment top_level_declaration
     : module_clause
-    | import_declaration
+    | import_directive
     | type_declaration
     | struct_declaration
     | field_declaration
@@ -72,18 +75,18 @@ attributes
     : attribute_section+
     ;
 
-attribute_section
+fragment attribute_section
     : '[' attribute_list ']'
     ;
 
-attribute_list
+fragment attribute_list
     : attribute ( ',' attribute )*
     ;
 
 attribute
     : KW_IF IDENTIFIER '?'?
     | ( KW_UNSAFE )
-    | attribute_name=IDENTIFIER ( ':' ( string_literal | IDENTIFIER ) )?
+    | name=IDENTIFIER ( ':' ( string_literal | IDENTIFIER ) )?
     | interpreted_string_literal
     ;
 
@@ -91,15 +94,15 @@ interpreted_string_literal
     : string_literal
     ;
 
-import_declaration
-    : KW_IMPORT module_name ( KW_AS IDENTIFIER | '{' import_symbol_list '}' )?
+import_directive
+    : KW_IMPORT module_name ( KW_AS alias_name=IDENTIFIER | '{' symbol_names=import_symbols '}' )?
     ;
 
 module_name
     : IDENTIFIER ( '.' IDENTIFIER )*
     ;
 
-import_symbol_list
+import_symbols
     : IDENTIFIER ( ',' IDENTIFIER )*
     ;
 
@@ -326,11 +329,9 @@ EOF             : ~.
 
 %%
 
-#undef PCC_INVOKE
-
 #include <stdarg.h>
 
-void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, size_t start, size_t end) {
+void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, int term, size_t start, size_t end) {
     if (chunk->thunks.len == 0) {
         return;
     }
@@ -341,11 +342,12 @@ void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, size_t st
     chunk->ast_info.last_thunk = thunk;
 
     thunk->ast_info.name = name;
+    thunk->ast_info.term = term;
     thunk->ast_info.start = start;
     thunk->ast_info.end = end;
 }
 
-void vsp_ast_push(vsparser_t *p, const char* name, size_t start, size_t end);
+void vsp_ast_push(vsparser_t *p, const char* name, int term, size_t start, size_t end);
 void vsp_ast_pop(vsparser_t *p, const char* name, bool succeeded);
 
 void vsp_ast_dump(vsparser_t *p, const pcc_thunk_t* thunk) {
@@ -354,7 +356,7 @@ void vsp_ast_dump(vsparser_t *p, const pcc_thunk_t* thunk) {
         return;
     }
     if (thunk->type == PCC_THUNK_NODE) {
-        vsp_ast_push(p, name, thunk->ast_info.start, thunk->ast_info.end);
+        vsp_ast_push(p, name, thunk->ast_info.term, thunk->ast_info.start, thunk->ast_info.end);
         for (size_t i = 0; i < thunk->data.node.thunks->len; i++) {
             vsp_ast_dump(p, thunk->data.node.thunks->buf[i]);
         }

@@ -168,6 +168,7 @@ typedef struct node_rule_tag {
     node_const_array_t codes;
     size_t line;
     size_t col;
+    int fragment;
 } node_rule_t;
 
 typedef struct node_reference_tag {
@@ -1253,6 +1254,7 @@ static node_t *create_node(node_type_t type) {
         node_const_array__init(&node->data.rule.codes);
         node->data.rule.line = VOID_VALUE;
         node->data.rule.col = VOID_VALUE;
+        node->data.rule.fragment = 0;
         break;
     case NODE_REFERENCE:
         node->data.reference.var = NULL;
@@ -2391,6 +2393,11 @@ EXCEPTION:;
 }
 
 static node_t *parse_rule(context_t *ctx) {
+    int f = 0;
+    if (match_string(ctx, "fragment")) {
+        match_spaces(ctx);
+        f = 1;
+    }
     const size_t p = ctx->bufcur;
     const size_t l = ctx->linenum;
     const size_t m = column_number(ctx);
@@ -2413,6 +2420,7 @@ static node_t *parse_rule(context_t *ctx) {
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;
     n_r->data.rule.col = m;
+    n_r->data.rule.fragment = f;
     return n_r;
 
 EXCEPTION:;
@@ -3462,7 +3470,7 @@ static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfai
     if (!gen->term_mode) {
         stream__puts(gen->stream, "PCC_AST_INFO(chunk");
         ast__expr_name(gen->stream, expr, 0);
-        stream__printf(gen->stream, ", p%d, q%d);\n", gen->scope, gen->scope);
+        stream__printf(gen->stream, ", %d, p%d, q%d);\n", gen->term_mode, gen->scope, gen->scope);
     }
     if (!bare) {
         gen->scope--;
@@ -3684,6 +3692,7 @@ static bool_t generate(context_t *ctx) {
             "\n"
             "typedef struct pcc_ast_thunk_info_tag {\n"
             "    const char *name;\n"
+            "    int term;\n"
             "    size_t start;\n"
             "    size_t end;\n"
             "} pcc_ast_thunk_info_t;\n"
@@ -5035,7 +5044,33 @@ static bool_t generate(context_t *ctx) {
             &sstream,
             "    pcc_context__destroy(ctx);\n"
             "}\n"
+            "\n"
         );
+        {
+            size_t i;
+            stream__printf(
+                &sstream,
+                "const char **%s_fragments() {\n"
+                "    static const char *fragments[] = {\n",
+                get_prefix(ctx)
+            );
+            for (i = 0; i < ctx->rules.len; i++) {
+                if (ctx->rules.buf[i]->data.rule.fragment) {
+                    stream__printf(
+                        &sstream,
+                        "        \"%s\",\n",
+                        ctx->rules.buf[i]->data.rule.name
+                    );
+                }
+            }
+            stream__puts(
+                &sstream,
+                "        0\n"
+                "    };\n"
+                "    return fragments;\n"
+                "}\n"
+            );
+        }
     }
     {
         stream__puts(
@@ -5067,6 +5102,11 @@ static bool_t generate(context_t *ctx) {
             &hstream,
             "void %s_destroy(%s_context_t *ctx);\n",
             get_prefix(ctx), get_prefix(ctx)
+        );
+        stream__printf(
+            &hstream,
+            "const char **%s_fragments();\n",
+            get_prefix(ctx)
         );
         stream__puts(
             &hstream,

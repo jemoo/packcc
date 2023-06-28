@@ -11,7 +11,7 @@ module ModuleName
 
 import strconv
 import v.ast as Ast
-import readline { Readline }
+import readline { Readline, Winsize }
 
 public struct BaseType {
     var Field1: int

@@ -684,12 +684,14 @@ int vsp_readfile(VsParser* p, const char* FileName) {
  *---------------------------------------------------------------------------*/
 
 template <typename Annotation> struct AstBase : public Annotation {
-    AstBase(size_t line, size_t column, const char* name, size_t position = 0, size_t length = 0,
+    AstBase(size_t line, size_t column, const char* name, const std::string_view& token,
+        size_t position = 0, size_t length = 0,
         size_t choice_count = 0, size_t choice = 0)
         : line(line), column(column), name(name),
         position(position), length(length), choice_count(choice_count),
         choice(choice), original_name(name),
-        original_choice_count(choice_count), original_choice(choice) {}
+        original_choice_count(choice_count), original_choice(choice),
+        is_token(!token.empty()), token(token) {}
 
     AstBase(const AstBase& ast, const char* original_name, size_t position = 0,
         size_t length = 0, size_t original_choice_count = 0,
@@ -698,23 +700,31 @@ template <typename Annotation> struct AstBase : public Annotation {
         position(position), length(length), choice_count(ast.choice_count),
         choice(ast.choice), original_name(original_name),
         original_choice_count(original_choice_count),
-        original_choice(original_choice), nodes(ast.nodes), parent(ast.parent) {}
+        original_choice(original_choice), is_token(ast.is_token),
+        token(ast.token), nodes(ast.nodes), parent(ast.parent) {}
 
     const size_t line = 1;
     const size_t column = 1;
 
     size_t position;
     size_t length;
-    const std::string name;
+    const std::string_view name;
     const size_t choice_count;
     const size_t choice;
-    const std::string original_name;
+    const std::string_view original_name;
     const size_t original_choice_count;
     const size_t original_choice;
+
+    const bool is_token;
+    const std::string_view token;
 
     std::vector<std::shared_ptr<AstBase<Annotation>>> nodes;
     std::weak_ptr<AstBase<Annotation>> parent;
 };
+
+inline std::string as_string(const std::string_view& v) {
+    return { v.data(), v.size() };
+}
 
 template <typename T>
 void ast_to_s_core(const std::shared_ptr<T>& ptr, std::string& s, int level,
@@ -723,12 +733,12 @@ void ast_to_s_core(const std::shared_ptr<T>& ptr, std::string& s, int level,
     for (auto i = 0; i < level; i++) {
         s += "  ";
     }
-    auto name = ast.name;
+    auto name = as_string(ast.name);
     if (ast.name != ast.original_name) {
-        name += ": " + ast.original_name;
+        name += ": " + as_string(ast.original_name);
     }
-    if (ast.nodes.empty()) {
-        s += "- " + name + "\n";
+    if (ast.is_token) {
+        s += "- " + name + " (" + as_string(ast.token) + ")\n";
     }
     else {
         s += "+ " + name + "\n";
@@ -800,18 +810,20 @@ void vsp_print_ast_node(AstNode node) {
     auto parent = node->parent.lock();
     if (parent) {
         vsp_print_ast_node(parent);
-        printf(".%s", node->name.c_str());
+        printf(".%s", node->name.data());
     }
     else {
-        printf("%s", node->name.c_str());
+        printf("%s", node->name.data());
     }
 }
 
-void vsp_ast_push(vsparser_t* p, const char* name, size_t start, size_t end) {
+void vsp_ast_push(vsparser_t* p_, const char* name, int term, size_t start, size_t end) {
     assert(name);
+    auto p = (VsParser*)p_;
     size_t line, col;
+    size_t len = end - start;
     vsp_compute_line_and_column((VsParser*)p, start, line, col);
-    auto node = make_shared<Ast>(line, col, name, start, end - start);
+    auto node = make_shared<Ast>(line, col, name, term?std::string_view(p->src+start, len):std::string_view(), start, len);
     ast_nodes.push_back(node);
     if (cur_node) {
         node->parent = cur_node;
@@ -846,10 +858,18 @@ void vsp_ast_pop(vsparser_t* p, const char* name, bool succeeded) {
     //printf("\r\n");
 }
 
-vector<string> get_no_ast_opt_rules() {
-    vector<string> rules = {
-        "attribute_spec",
-    };
+extern "C" const char** vsharp_fragments();
+
+vector<string> get_ast_opt_rules() {
+    const char** fragments = vsharp_fragments();
+    vector<string> rules;
+    for (int i=0;;i++) {
+        const char* name = fragments[i];
+        if (!name) {
+            break;
+        }
+        rules.push_back(name);
+    }
     return rules;
 }
 
@@ -866,7 +886,7 @@ int main() {
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
-    root_node = AstOptimizer(true, get_no_ast_opt_rules()).optimize(root_node);
+    root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(root_node);
     cout << "--------------------------------------------------" << endl;
     cout << ast_to_s(root_node);
 
