@@ -3451,6 +3451,19 @@ static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfa
     }
 }
 
+static int is_term_name(const char* name) {
+    return name[0] >= 'A' && name[0] <= 'Z';
+}
+
+static const char *ast__name(const node_t* expr, int* term) {
+    if (expr->type == NODE_REFERENCE) {
+        *term = is_term_name(expr->data.reference.name);
+        return expr->data.reference.var ?
+            expr->data.reference.var : expr->data.reference.name;
+    }
+    return NULL;
+}
+
 static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     code_reach_t r;
     if (!bare) {
@@ -3468,9 +3481,12 @@ static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfai
     stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
     stream__write_characters(gen->stream, ' ', indent);
     if (!gen->term_mode) {
-        stream__puts(gen->stream, "PCC_AST_INFO(chunk");
-        ast__expr_name(gen->stream, expr, 0);
-        stream__printf(gen->stream, ", %d, p%d, q%d);\n", gen->term_mode, gen->scope, gen->scope);
+        int term = 0;
+        const char* name = ast__name(expr, &term);
+        if (name) {
+            stream__printf(gen->stream, "PCC_AST_INFO(chunk, \"%s\", %d, p%d, q%d);\n", 
+                name, term, gen->scope, gen->scope);
+        }
     }
     if (!bare) {
         gen->scope--;
@@ -4928,8 +4944,7 @@ static bool_t generate(context_t *ctx) {
                 g.ascii = ctx->opts.ascii;
 
                 const char* rule_name = ctx->rules.buf[i]->data.rule.name;
-                int term_mode = (rule_name[0] >= 'A' && rule_name[0] <= 'Z') ||
-                                (rule_name[0] == '_' && rule_name[1] == 0);
+                int term_mode = is_term_name(rule_name) || (rule_name[0] == '_' && rule_name[1] == 0);
                 g.term_mode = term_mode;
 
                 stream__printf(
