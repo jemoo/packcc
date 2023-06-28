@@ -45,9 +45,13 @@ extern "C" {
             const vsp_pos_t* p_generic_names, int n_generic_names, const int* p_supers, int n_supers,
             const vsp_field_t* p_fields, int n_fields, const int* p_methods, int n_methods);
 
+        void (*on_ast_file)(void* udata, void* ast);
+
     } vsp_listener_t;
 
-    int vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* listener);
+    void vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* listener);
+    void* vsp_named_nodes(void* ast_node, const char* name, size_t len, size_t* num);
+    void* vsp_sub_nodes(void* ast_node, size_t* num);
 
     typedef struct vsp_type_desc_t {
         vsp_pos_t pos;
