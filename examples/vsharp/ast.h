@@ -8,23 +8,24 @@
 #include <unordered_map>
 
 template <typename Annotation> struct AstBase : public Annotation {
-    AstBase(size_t line, size_t column, const char* name, const std::string_view& token,
+    AstBase(size_t line, size_t column, const char* name, const char* view, int token,
         size_t position = 0, size_t length = 0)
         : line(line), column(column), name(name),
         position(position), length(length), original_name(name),
-        token(token) {}
+        view(view), token(token) {}
 
     AstBase(const AstBase& ast, const char* original_name, size_t position = 0, size_t length = 0)
         : line(ast.line), column(ast.column), name(ast.name),
         position(position), length(length), original_name(original_name),
-        token(ast.token), nodes(ast.nodes), parent(ast.parent) {}
+        view(ast.view), token(ast.token), nodes(ast.nodes), parent(ast.parent) {}
 
     const size_t line;
     const size_t column;
     const size_t position;
     const size_t length;
     const std::string_view name;
-    const std::string_view token;
+    const char* view;
+    const int token;
     const std::string_view original_name;
     std::vector<std::shared_ptr<AstBase<Annotation>>> nodes;
     std::weak_ptr<AstBase<Annotation>> parent;
@@ -48,8 +49,8 @@ void ast_to_s_core(const std::shared_ptr<T>& ptr, std::string& s, int level,
     if (ast.name != ast.original_name) {
         name += ": " + as_string(ast.original_name);
     }
-    if (ast.token.size()) {
-        s += "- " + name + " (" + as_string(ast.token) + ")\n";
+    if (ast.token) {
+        s += "- " + name + " (" + std::string(ast.view, ast.length) + ")\n";
     }
     else {
         s += "+ " + name + "\n";
@@ -111,16 +112,23 @@ using AstNode = AstBase<EmptyType>;
 typedef std::shared_ptr<AstNode> AstPtr;
 
 void ast_flush(AstPtr node) {
-    for (auto sub : node->nodes) {
-        node->cached_nodes.push_back(sub.get());
-        auto it = node->cached_map.find(sub->name);
-        if (it == node->cached_map.end()) {
-            node->cached_map.insert({ sub->name, {sub.get()}});
+    if (!node->nodes.empty()) {
+        // update length
+        auto last_node = node->nodes.back();
+        size_t last_node_end = last_node->position + last_node->length;
+        const_cast<size_t&>(node->length) = last_node_end - node->position;
+        // make node cache
+        for (auto sub : node->nodes) {
+            node->cached_nodes.push_back(sub.get());
+            auto it = node->cached_map.find(sub->name);
+            if (it == node->cached_map.end()) {
+                node->cached_map.insert({ sub->name, {sub.get()} });
+            }
+            else {
+                it->second.push_back(sub.get());
+            }
+            ast_flush(sub);
         }
-        else {
-            it->second.push_back(sub.get());
-        }
-        ast_flush(sub);
     }
 }
 

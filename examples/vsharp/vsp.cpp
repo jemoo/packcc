@@ -590,7 +590,7 @@ void VsParser::PushAstNode(const char* name, int term, size_t start, size_t end)
     size_t len_ = end - start;
     vsp_compute_line_and_column(this, start, line, col);
     auto token = term ? std::string_view(src + start, len_) : std::string_view();
-    auto node = make_shared<AstNode>(line, col, name, token, start, len_);
+    auto node = make_shared<AstNode>(line, col, name, src+start, term, start, len_);
     ast_nodes.push_back(node);
     if (cur_node) {
         node->parent = cur_node;
@@ -677,9 +677,12 @@ int main() {
     vsharp_parse(ctx, NULL);
     vsharp_destroy(ctx);
 
-    p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
-    cout << "--------------------------------------------------" << endl;
-    cout << ast_to_s(p.root_node);
+    if (p.root_node)
+    {
+        p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        cout << "--------------------------------------------------" << endl;
+        cout << ast_to_s(p.root_node);
+    }
 
     return 0;
 }
@@ -718,8 +721,8 @@ void vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* 
 
     if (p.root_node && listener->on_ast_file) {
         p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
-        cout << "--------------------------------------------------" << endl;
-        cout << ast_to_s(p.root_node);
+        //cout << "--------------------------------------------------" << endl;
+        //cout << ast_to_s(p.root_node);
 
         ast_flush(p.root_node);
         listener->on_ast_file(listener->udata, p.root_node.get());
