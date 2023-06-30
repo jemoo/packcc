@@ -208,7 +208,7 @@ field_declaration
     | attributes? KW_PUBLIC? field_specifier
     ;
 
-field_specifier_list
+fragment field_specifier_list
     : '{' field_specifier* '}'
     ;
 
