@@ -679,7 +679,7 @@ int main() {
 
     if (p.root_node)
     {
-        p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        //p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
         cout << "--------------------------------------------------" << endl;
         cout << ast_to_s(p.root_node);
     }
@@ -720,9 +720,9 @@ void vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* 
     listener->num_lines = (int)p.lines.size();
 
     if (p.root_node && listener->on_ast_file) {
-        p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
-        //cout << "--------------------------------------------------" << endl;
-        //cout << ast_to_s(p.root_node);
+        //p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        cout << "--------------------------------------------------" << endl;
+        cout << ast_to_s(p.root_node);
 
         ast_flush(p.root_node);
         listener->on_ast_file(listener->udata, p.root_node.get());

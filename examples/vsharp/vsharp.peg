@@ -119,11 +119,11 @@ struct_declaration
         IDENTIFIER generic_names? ( ':' super_type_list )? '{' struct_member_list? '}'
     ;
 
-generic_names
+fragment generic_names
     : '<' generic_name_list '>'
     ;
 
-generic_name_list
+fragment generic_name_list
     : generic_name ( ',' generic_name )*
     ;
 
@@ -135,7 +135,7 @@ type
     : simple_type '&'? '?'?
     ;
 
-super_type_list
+fragment super_type_list
     : super_type ( ',' super_type )*
     ;
 
@@ -186,11 +186,11 @@ type_list
     : type ( ',' type )*
     ;
 
-struct_member_list
+fragment struct_member_list
     : struct_member_declaration+
     ;
 
-struct_member_declaration
+fragment struct_member_declaration
     : field_declaration
     | function_declaration
     ;

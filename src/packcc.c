@@ -3408,9 +3408,14 @@ static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfa
                 node->data.reference.name, (ulong_t)node->data.reference.index, onfail);
         }
         else {
-            stream__write_characters(gen->stream, ' ', indent);
-            stream__printf(gen->stream, "if (!pcc_apply_rule(ctx, pcc_evaluate_rule_%s, &chunk->thunks, NULL)) goto L%04d;\n",
-                node->data.reference.name, onfail);
+            if (node->data.reference.rule->data.rule.fragment) {
+                generate_code(gen, node->data.reference.rule->data.rule.expr, onfail, indent, bare, ast_loc);
+            }
+            else {
+                stream__write_characters(gen->stream, ' ', indent);
+                stream__printf(gen->stream, "if (!pcc_apply_rule(ctx, pcc_evaluate_rule_%s, &chunk->thunks, NULL)) goto L%04d;\n",
+                    node->data.reference.name, onfail);
+            }
         }
         //if (ast_loc->size == 0) {
         //    int ast_index = ast__push(ast_loc);
@@ -3479,12 +3484,12 @@ static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfai
     r = _generate_code(gen, expr, onfail, indent, FALSE, ast_loc);
     stream__write_characters(gen->stream, ' ', indent);
     stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
-    stream__write_characters(gen->stream, ' ', indent);
     if (!gen->term_mode) {
         int term = 0;
         const char* name = ast__name(expr, &term);
         if (name) {
-            stream__printf(gen->stream, "PCC_AST_INFO(chunk, \"%s\", %d, p%d, q%d);\n", 
+            stream__write_characters(gen->stream, ' ', indent);
+            stream__printf(gen->stream, "PCC_AST_INFO(chunk, \"%s\", %d, p%d, q%d);\n",
                 name, term, gen->scope, gen->scope);
         }
     }
