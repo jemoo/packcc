@@ -42,6 +42,11 @@ template <typename T>
 void ast_to_s_core(const std::shared_ptr<T>& ptr, std::string& s, int level,
     std::function<std::string(const T& ast, int level)> fn) {
     const auto& ast = *ptr;
+    size_t np = s.length() + 16;
+    s += "[" + std::to_string(ast.position) + ", " + std::to_string(ast.position + ast.length) + "]";
+    while (s.length() < np) {
+        s += " ";
+    }
     for (auto i = 0; i < level; i++) {
         s += "  ";
     }
@@ -68,6 +73,28 @@ ast_to_s(const std::shared_ptr<T>& ptr,
     std::string s;
     ast_to_s_core(ptr, s, 0, fn);
     return s;
+}
+
+template <typename T>
+void ast_flush(std::shared_ptr<T> node) {
+    if (!node->nodes.empty()) {
+        // make node cache
+        for (auto sub : node->nodes) {
+            node->cached_nodes.push_back(sub.get());
+            auto it = node->cached_map.find(sub->name);
+            if (it == node->cached_map.end()) {
+                node->cached_map.insert({ sub->name, {sub.get()} });
+            }
+            else {
+                it->second.push_back(sub.get());
+            }
+            ast_flush(sub);
+        }
+        // update length
+        auto last_node = node->nodes.back();
+        size_t last_node_end = last_node->position + last_node->length;
+        const_cast<size_t&>(node->length) = last_node_end - node->position;
+    }
 }
 
 struct AstOptimizer {
@@ -110,39 +137,3 @@ struct EmptyType {};
 using AstNode = AstBase<EmptyType>;
 
 typedef std::shared_ptr<AstNode> AstPtr;
-
-void ast_flush(AstPtr node) {
-    if (!node->nodes.empty()) {
-        // update length
-        auto last_node = node->nodes.back();
-        size_t last_node_end = last_node->position + last_node->length;
-        const_cast<size_t&>(node->length) = last_node_end - node->position;
-        // make node cache
-        for (auto sub : node->nodes) {
-            node->cached_nodes.push_back(sub.get());
-            auto it = node->cached_map.find(sub->name);
-            if (it == node->cached_map.end()) {
-                node->cached_map.insert({ sub->name, {sub.get()} });
-            }
-            else {
-                it->second.push_back(sub.get());
-            }
-            ast_flush(sub);
-        }
-    }
-}
-
-extern "C" const char** vsharp_fragments();
-
-std::vector<std::string> get_ast_opt_rules() {
-    const char** fragments = vsharp_fragments();
-    std::vector<std::string> rules;
-    for (int i = 0;; i++) {
-        const char* name = fragments[i];
-        if (!name) {
-            break;
-        }
-        rules.push_back(name);
-    }
-    return rules;
-}

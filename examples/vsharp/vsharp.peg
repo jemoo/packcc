@@ -22,6 +22,7 @@ typedef vsharp_context_t pcc_context_t;
 int vsp_getchar(vsparser_t* p);
 void vsp_debug(vsparser_t *p, int event, const char *rule, int level, size_t pos, const char *buffer, int length);
 void vsp_error(vsparser_t *p);
+void vsp_syntax_error(vsparser_t *p, const char* msg, const char* text, size_t start, size_t stop);
 void vsp_whitespace(pcc_context_t *ctx, struct pcc_thunk_chunk_tag *chunk);
 void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, int term, size_t start, size_t end);
 void vsp_ast_gen(vsparser_t *p, const struct pcc_thunk_array_tag *thunks);
@@ -51,10 +52,10 @@ void vsp_ast_gen(vsparser_t *p, const struct pcc_thunk_array_tag *thunks);
 }
 
 compilation_unit
-    : top_level_declaration* EOF _
+    : top_level_declaration* EOF _*
     ;
 
-fragment top_level_declaration
+inline top_level_declaration
     : module_clause
     | import_directive
     | type_declaration
@@ -63,30 +64,30 @@ fragment top_level_declaration
     | function_declaration
     ;
 
-module_clause
-    : attributes? KW_MODULE module_identifier
-    ;
+//error
+//    : . { vsp_syntax_error(auxil, "unexpected token", $0, $0s, $0e); }
+//    ;
 
-module_identifier
-    : IDENTIFIER
+module_clause
+    : attributes? MODULE module_name
     ;
 
 attributes
     : attribute_section+
     ;
 
-fragment attribute_section
-    : '[' attribute_list ']'
+inline attribute_section
+    : L_BRACKET attribute_list R_BRACKET
     ;
 
-fragment attribute_list
-    : attribute ( ',' attribute )*
+inline attribute_list
+    : attribute ( COMMA attribute )*
     ;
 
 attribute
-    : KW_IF IDENTIFIER '?'?
-    | ( KW_UNSAFE )
-    | name=IDENTIFIER ( ':' ( string_literal | IDENTIFIER ) )?
+    : IF IDENTIFIER QUESTION?
+    | ( UNSAFE )
+    | name=IDENTIFIER ( COLON ( string_literal | IDENTIFIER ) )?
     | interpreted_string_literal
     ;
 
@@ -95,36 +96,36 @@ interpreted_string_literal
     ;
 
 import_directive
-    : KW_IMPORT module_name ( KW_AS alias_name=IDENTIFIER | '{' symbol_names=import_symbols '}' )?
+    : IMPORT module_name ( AS alias_name=IDENTIFIER | L_BRACE symbol_names=import_symbols R_BRACE )?
     ;
 
 module_name
-    : IDENTIFIER ( '.' IDENTIFIER )*
+    : IDENTIFIER ( DOT IDENTIFIER )* UNEXPECTED_DOT?
     ;
 
 import_symbols
-    : IDENTIFIER ( ',' IDENTIFIER )*
+    : IDENTIFIER ( COMMA IDENTIFIER )*
     ;
 
 type_declaration
-    : attributes? KW_PUBLIC? KW_TYPE type_identifier generic_names? '=' sum_type_list
+    : attributes? PUBLIC? TYPE type_identifier generic_names? EQUALS sum_type_list
     ;
 
 sum_type_list
-    : type ( '|' type )*
+    : type ( BAR type )*
     ;
 
 struct_declaration
-    : attributes? KW_PUBLIC? ( KW_STRUCT | KW_UNION | KW_CLASS | KW_INTERFACE | KW_ENUM )
-        IDENTIFIER generic_names? ( ':' super_type_list )? '{' struct_member_list? '}'
+    : attributes? PUBLIC? ( STRUCT | UNION | CLASS | INTERFACE | ENUM )
+        IDENTIFIER generic_names? ( COLON super_type_list )? L_BRACE struct_member_list? R_BRACE
     ;
 
-fragment generic_names
-    : '<' generic_name_list '>'
+inline generic_names
+    : L_CHEVRON generic_name_list R_CHEVRON
     ;
 
-fragment generic_name_list
-    : generic_name ( ',' generic_name )*
+inline generic_name_list
+    : generic_name ( COMMA generic_name )*
     ;
 
 generic_name
@@ -132,19 +133,11 @@ generic_name
     ;
 
 type
-    : simple_type type_modifier_reference? type_modifier_nullable?
+    : simple_type AMP? QUESTION?
     ;
 
-type_modifier_reference
-    : '&'
-    ;
-
-type_modifier_nullable
-    : '?'
-    ;
-
-fragment super_type_list
-    : super_type ( ',' super_type )*
+inline super_type_list
+    : super_type ( COMMA super_type )*
     ;
 
 super_type
@@ -154,11 +147,11 @@ super_type
     ;
 
 generic_type
-    : ( qualified_type | type_identifier ) '<' type_list '>'
+    : ( qualified_type | type_identifier ) L_CHEVRON type_list R_CHEVRON
     ;
 
 qualified_type
-    : type_identifier ( '.' type_identifier )+
+    : type_identifier ( DOT type_identifier )+
     ;
 
 type_identifier
@@ -175,45 +168,44 @@ simple_type
     ;
 
 pointer_type
-    : simple_type '*'
+    : simple_type STAR
     ;
 
 function_type
-    : KW_FUNCTION function_type_signature
+    : FUNC function_type_signature
     ;
 
 function_type_signature
-    : '(' type_list? ')' ( ':' type )?
+    : L_PAREN type_list? R_PAREN ( COLON type )?
     ;
 
 tuple_type
-    : '(' type_list ')'
+    : L_PAREN type_list R_PAREN
     ;
 
 type_list
-    : type ( ',' type )*
+    : type ( COMMA type )*
     ;
 
-fragment struct_member_list
+inline struct_member_list
     : struct_member_declaration+
     ;
 
-fragment struct_member_declaration
+inline struct_member_declaration
     : field_declaration
     | function_declaration
     ;
 
 field_declaration
-    : attributes? KW_PUBLIC? ( KW_CONST | KW_LET | KW_VAR ) ( field_specifier_list | field_specifier )
-    | attributes? KW_PUBLIC? field_specifier
+    : attributes? PUBLIC? ( LET | VAR ) ( field_specifier_list | field_specifier )
     ;
 
-fragment field_specifier_list
-    : '{' field_specifier* '}'
+inline field_specifier_list
+    : L_BRACE field_specifier* R_BRACE
     ;
 
 field_specifier
-    : field_identifier ':' type ( '=' expression )?
+    : field_identifier ( COLON type ( EQUALS expression )? | EQUALS expression )
     ;
 
 field_identifier
@@ -221,133 +213,450 @@ field_identifier
     ;
 
 function_declaration
-    : attributes? KW_PUBLIC? KW_CONST? 
-        ( KW_FUNCTION? IDENTIFIER generic_names? function_signature ) block?
+    : attributes? PUBLIC? CONST? 
+        ( FUNC? IDENTIFIER generic_names? function_signature ) block?
     ;
 
 function_signature
-    : '(' parameter_list? ')' ( ':' type )?
+    : L_PAREN parameter_list? R_PAREN ( COLON type )?
     ;
 
-parameter_list
-    : parameter_declaration ( ',' parameter_declaration )*
+inline parameter_list
+    : parameter_declaration ( COMMA parameter_declaration )*
     ;
 
 parameter_declaration
-    : KW_CONST? IDENTIFIER ':' parameter_type
+    : CONST? IDENTIFIER COLON type DOTDOTDOT?
     ;
 
-parameter_type
-    : type '...'?
-    ;
-
-# -------------------- Statements ------------------------------
+// -------------------- Statements ------------------------------
 
 block
-    : '{' statement_list? '}'
+    : L_BRACE statement_list? R_BRACE
     ;
 
-statement_list
+inline statement_list
     : statement+
     ;
 
 statement
-    : expression_statement
+    : declaration_statement
+    | expression_statement
     ;
 
 expression_statement
     : expression
     ;
 
-# -------------------- Expressions ------------------------------
-
-expression
-    : IDENTIFIER
-    | string_literal
-    | integer_literal
-    | boolean_literal
-    | KW_NULL
-    | KW_THIS
-    | KW_BASE
+declaration_statement
+    : local_variable_declaration 
     ;
 
-string_literal
-    : STRING_LITERAL
+local_variable_declaration 
+    : ( LET | VAR ) local_variable_declarators
+    ;
+
+inline local_variable_declarators
+    : local_variable_declarator ( COMMA local_variable_declarator )*
+    ;
+
+local_variable_declarator
+    : IDENTIFIER EQUALS local_variable_initializer
+    ;
+
+inline local_variable_initializer
+    : expression
+    ;
+
+// -------------------- Expressions ------------------------------
+
+expression
+    : assignment
+    | non_assignment_expression
+    ;
+
+optimizable non_assignment_expression
+    : conditional_expression
+    | lambda_expression
+    ;
+
+optimizable conditional_expression
+    : null_coalescing_expression ( QUESTION true_expression=expression COLON false_expression=expression )?
+    ;
+
+optimizable null_coalescing_expression
+    : conditional_or_expression ( binary_expression_operator=DBLQUESTION null_coalescing_expression )?
+    ;
+
+optimizable conditional_or_expression
+    : conditional_or_expression binary_expression_operator=DBLBAR conditional_and_expression
+    | conditional_and_expression
+    ;
+
+optimizable conditional_and_expression
+    : conditional_and_expression binary_expression_operator=DBLAMP inclusive_or_expression
+    | inclusive_or_expression
+    ;
+
+optimizable inclusive_or_expression
+    : inclusive_or_expression binary_expression_operator=BAR exclusive_or_expression
+    | exclusive_or_expression
+    ;
+
+optimizable exclusive_or_expression
+    : exclusive_or_expression binary_expression_operator=CARAT and_expression
+    | and_expression
+    ;
+
+optimizable and_expression
+    : and_expression binary_expression_operator=AMP equality_expression
+    | equality_expression
+    ;
+
+optimizable equality_expression
+    : equality_expression binary_expression_operator=equality_expression_operator relational_expression
+    | relational_expression
+    ;
+
+optimizable equality_expression_operator
+    : COMPAREEQUALS | COMPARENOTEQUALS
+    ;
+
+optimizable relational_expression
+    : relational_expression
+        ( binary_expression_operator=relational_expression_operator shift_expression
+        | IS type
+        | AS type
+        )
+    | shift_expression
+    ;
+
+optimizable relational_expression_operator
+    : L_CHEVRON | R_CHEVRON | LESSEQUALS | GREATEREQUALS
+    ;
+
+optimizable shift_expression
+    : shift_expression binary_expression_operator=shift_expression_operator additive_expression
+    | additive_expression
+    ;
+
+optimizable shift_expression_operator
+    : L_DBLCHEVRON | R_DBLCHEVRON
+    ;
+
+optimizable additive_expression
+    : additive_expression binary_expression_operator=additive_expression_operator multiplicative_expression
+    | multiplicative_expression
+    ;
+
+optimizable additive_expression_operator
+    : PLUS | MINUS
+    ;
+
+optimizable multiplicative_expression
+    : multiplicative_expression binary_expression_operator=multiplicative_expression_operator unary_expression
+    | unary_expression
+    ;
+
+optimizable multiplicative_expression_operator
+    : STAR | DIVIDE | PERCNT
+    ;
+
+optimizable unary_expression
+    : unary_expression_operator unary_expression
+    | primary_expression
+    ;
+
+unary_expression_operator
+    : INC | DEC | PLUS | MINUS | EXCL | TILDE | STAR | AMP
+    ;
+
+optimizable primary_expression
+    : primary_no_array_creation_expression
+    | array_creation_expression
+    ;
+
+optimizable primary_no_array_creation_expression
+    : member_access
+    //| null_conditional_member_access
+    | element_access
+    //| null_conditional_element_access
+    | post_increment_expression
+    | post_decrement_expression
+    | invocation_expression
+    //| tuple_expression
+    | parenthesized_expression
+    | literal
+    //| interpolated_string_expression
+    | this_access
+    | base_access
+    //| object_creation_expression
+    //| delegate_creation_expression
+    //| anonymous_object_creation_expression
+    | typeof_expression
+    | sizeof_expression
+    //| checked_expression
+    //| unchecked_expression
+    //| default_value_expression
+    | nameof_expression
+    //| anonymous_method_expression
+    //| pointer_member_access
+    //| pointer_element_access
+    //| stackalloc_expression
+    | simple_name
+    ;
+
+simple_name
+    : IDENTIFIER
+    ;
+
+parenthesized_expression
+    : L_PAREN expression R_PAREN
+    ;
+
+member_access
+    : primary_expression ( DOT simple_name | QUESTIONDOT simple_name dependent_access* )
+    ;
+
+dependent_access
+    : DOT simple_name
+    | L_BRACKET argument_list R_BRACKET
+    | L_PAREN argument_list? R_PAREN
+    ;
+
+invocation_expression
+    : primary_expression L_PAREN argument_list? R_PAREN
+    ;
+
+element_access
+    : primary_expression
+        ( L_BRACKET argument_list R_BRACKET |
+            QUESTIONL_BRACKET argument_list R_BRACKET dependent_access* )
+    ;
+
+this_access
+    : THIS
+    ;
+
+base_access
+    : BASE
+    ;
+
+post_increment_expression
+    : primary_expression INC
+    ;
+
+post_decrement_expression
+    : primary_expression DEC
+    ;
+
+typeof_expression
+    : TYPEOF L_PAREN type R_PAREN
+    ;
+
+sizeof_expression
+    : SIZEOF L_PAREN type R_PAREN
+    ;
+
+nameof_expression
+    : NAMEOF L_PAREN simple_name R_PAREN
+    ;
+
+argument_list
+    : argument ( COMMA argument )*
+    ;
+
+argument
+    : argument_name? argument_value
+    ;
+
+inline argument_name
+    : IDENTIFIER COLON
+    ;
+
+inline argument_value
+    : expression
+    ;
+
+assignment
+    : unary_expression assignment_operator expression
+    ;
+
+assignment_operator
+    : EQUALS | PLUSEQUALS | MINUSEQUALS | MULTIPLYEQUALS | DIVIDEEQUALS | MODULUSEQUALS
+    | ANDEQUALS | OREQUALS | XOREQUALS | SHIFTLEFTEQUALS | SHIFTRIGHTEQUALS
+    ;
+
+lambda_expression
+    : 'lambda_expression'
+    ;
+
+array_creation_expression
+    : 'array_creation_expression'
+    ;
+
+// -------------------- Literals ------------------------------
+
+inline literal
+    : boolean_literal
+    | integer_literal
+    | real_literal
+    | character_literal
+    | string_literal
+    | null_literal
+    ;
+
+boolean_literal
+    : TRUE
+    | FALSE
     ;
 
 integer_literal
     : INTEGER_LITERAL
     ;
 
-boolean_literal
-    : KW_TRUE
-    | KW_FALSE
+real_literal
+    : 'real_literal'
     ;
+
+character_literal
+    : CHARACTER_LITERAL
+    ;
+
+string_literal
+    : STRING_LITERAL
+    ;
+
+null_literal
+    : NULL
+    ;
+
+// -------------------- Keywords ------------------------------
 
 keywords
-    : KW_MODULE | KW_IMPORT | KW_AS
+    : MODULE | IMPORT | AS | CLASS
     ;
 
-# -------------------- Terminals ------------------------------
+// -------------------- Terminals ------------------------------
 
 IDENTIFIER
-    : BASIC_IDENTIFIER
+    : ~keywords BASIC_IDENTIFIER
     | '@' keywords
     ;
 
 BASIC_IDENTIFIER
-    : LETTER LD*
+    : LETTER ( LETTER | DIGIT )*
     ;
 
-KW_MODULE       : 'module'          ~LD
-KW_IMPORT       : 'import'          ~LD
-KW_AS           : 'as'              ~LD
-KW_IF           : 'if'              ~LD
-KW_UNSAFE       : 'unsafe'          ~LD
-KW_PUBLIC       : 'public'          ~LD
-KW_STRUCT       : 'struct'          ~LD
-KW_UNION        : 'union'           ~LD
-KW_CLASS        : 'class'           ~LD
-KW_INTERFACE    : 'interface'       ~LD
-KW_ENUM         : 'enum'            ~LD
-KW_FUNCTION     : 'function'        ~LD
-KW_TYPE         : 'type'            ~LD
-KW_CONST        : 'const'           ~LD
-KW_LET          : 'let'             ~LD
-KW_VAR          : 'var'             ~LD
-KW_TRUE         : 'true'            ~LD
-KW_FALSE        : 'false'           ~LD
-KW_NULL         : 'null'            ~LD
-KW_THIS         : 'this'            ~LD
-KW_BASE         : 'base'            ~LD
+MODULE          : 'module'          ~LD
+IMPORT          : 'import'          ~LD
+AS              : 'as'              ~LD
+IS              : 'is'              ~LD
+IF              : 'if'              ~LD
+UNSAFE          : 'unsafe'          ~LD
+PUBLIC          : 'public'          ~LD
+STRUCT          : 'struct'          ~LD
+UNION           : 'union'           ~LD
+CLASS           : 'class'           ~LD
+INTERFACE       : 'interface'       ~LD
+ENUM            : 'enum'            ~LD
+FUNC            : 'func'            ~LD
+TYPE            : 'type'            ~LD
+CONST           : 'const'           ~LD
+LET             : 'let'             ~LD
+VAR             : 'var'             ~LD
+TRUE            : 'true'            ~LD
+FALSE           : 'false'           ~LD
+NULL            : 'null'            ~LD
+THIS            : 'this'            ~LD
+BASE            : 'base'            ~LD
+TYPEOF          : 'typeof'          ~LD
+SIZEOF          : 'sizeof'          ~LD
+NAMEOF          : 'nameof'          ~LD
 
 LETTER          : [a-zA-Zα-ωΑ-Ωµ_]
 DIGIT           : [0-9]
 LD              : LETTER | DIGIT
 
-STRING_LITERAL  : '\"' ( ~'\"' . )* '\"'
-INTEGER_LITERAL : [0-9]+
+STRING_LITERAL      : '\"' ( ~'\"' . )* '\"'
+CHARACTER_LITERAL   : '\'' ( ~'\'' . )* '\''
+INTEGER_LITERAL     : [0-9]+
 
-_               : (SPACE | EOL | COMMENT)*
+L_BRACE         : '{'
+R_BRACE         : '}'
+L_PAREN         : '('
+R_PAREN         : ')'
+L_BRACKET       : '['
+R_BRACKET       : ']'
+AMP             : '&'
+QUESTION        : '?'
+DBLQUESTION     : '??'
+QUESTIONDOT     : '?.'
+QUESTIONL_BRACKET   : '?['
+STAR            : '*'
+DOT             : '.'
+DOTDOTDOT       : '...'
+COMMA           : ','
+COLON           : ':'
+CARAT           : '^'
+EQUALS          : '='
+BAR             : '|'
+DBLBAR          : '||'
+DBLAMP          : '&&'
+PLUS            : '+'
+MINUS           : '-'
+INC             : '++'
+DEC             : '--'
+EXCL            : '!'
+TILDE           : '~'
+DIVIDE          : '/'
+PERCNT          : '%'
+L_DBLCHEVRON    : '<<'
+R_DBLCHEVRON    : '>>'
+L_CHEVRON       : '<'
+R_CHEVRON       : '>'
+LESSEQUALS      : '<='
+GREATEREQUALS   : '>='
+COMPAREEQUALS   : '=='
+COMPARENOTEQUALS: '!='
+PLUSEQUALS      : '+='
+MINUSEQUALS     : '-='
+MULTIPLYEQUALS  : '*='
+DIVIDEEQUALS    : '/='
+MODULUSEQUALS   : '%='
+ANDEQUALS       : '&='
+OREQUALS        : '|='
+XOREQUALS       : '^='
+SHIFTLEFTEQUALS : '<<='
+SHIFTRIGHTEQUALS    : '>>='
+
+_               : SPACE | EOL | COMMENT
 SPACE           : [ \u0009\u000B\u000C]
 COMMENT         : '//' ( ~EOL . )*
                 | '/*' ( ~'*/' . )* '*/'
 EOL             : '\n' | '\r\n' | '\r'
 EOF             : ~.
 
-%%
+UNEXPECTED_DOT
+    : '.' { vsp_syntax_error(auxil, "unexpected '.'", $0, $0s, $0e); }
+    ;
 
-#include <stdarg.h>
+%%
 
 void vsp_ast_info(struct pcc_thunk_chunk_tag* chunk, const char *name, int term, size_t start, size_t end) {
     if (chunk->thunks.len == 0) {
+        //printf("xxxxxxxx %s\n", name);
         return;
     }
     pcc_thunk_t* thunk = chunk->thunks.buf[chunk->thunks.len-1];
+/*
     if (chunk->ast_info.last_thunk == thunk) {
+        //printf("-x-x-x-x %s\n", name);
         return;
     }
     chunk->ast_info.last_thunk = thunk;
+*/
+    //printf("-------- %s\n", name);
 
     thunk->ast_info.name = name;
     thunk->ast_info.term = term;

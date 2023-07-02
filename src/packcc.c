@@ -168,7 +168,8 @@ typedef struct node_rule_tag {
     node_const_array_t codes;
     size_t line;
     size_t col;
-    int fragment;
+    int inline_;
+    int optimizable;
 } node_rule_t;
 
 typedef struct node_reference_tag {
@@ -1254,7 +1255,8 @@ static node_t *create_node(node_type_t type) {
         node_const_array__init(&node->data.rule.codes);
         node->data.rule.line = VOID_VALUE;
         node->data.rule.col = VOID_VALUE;
-        node->data.rule.fragment = 0;
+        node->data.rule.inline_ = 0;
+        node->data.rule.optimizable = 0;
         break;
     case NODE_REFERENCE:
         node->data.reference.var = NULL;
@@ -1959,7 +1961,7 @@ static bool_t match_directive_c(context_t *ctx) {
 }
 
 static bool_t match_comment(context_t *ctx) {
-    return match_section_line_(ctx, "#");
+    return match_section_line_(ctx, "//");
 }
 
 static bool_t match_comment_c(context_t *ctx) {
@@ -2393,10 +2395,15 @@ EXCEPTION:;
 }
 
 static node_t *parse_rule(context_t *ctx) {
-    int f = 0;
-    if (match_string(ctx, "fragment")) {
+    int inline_ = 0;
+    int optimizable = 0;
+    if (match_string(ctx, "inline")) {
         match_spaces(ctx);
-        f = 1;
+        inline_ = 1;
+    }
+    else if (match_string(ctx, "optimizable")) {
+        match_spaces(ctx);
+        optimizable = 1;
     }
     const size_t p = ctx->bufcur;
     const size_t l = ctx->linenum;
@@ -2420,7 +2427,8 @@ static node_t *parse_rule(context_t *ctx) {
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;
     n_r->data.rule.col = m;
-    n_r->data.rule.fragment = f;
+    n_r->data.rule.inline_ = inline_;
+    n_r->data.rule.optimizable = optimizable;
     return n_r;
 
 EXCEPTION:;
@@ -3408,7 +3416,7 @@ static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfa
                 node->data.reference.name, (ulong_t)node->data.reference.index, onfail);
         }
         else {
-            if (node->data.reference.rule->data.rule.fragment) {
+            if (node->data.reference.rule->data.rule.inline_) {
                 generate_code(gen, node->data.reference.rule->data.rule.expr, onfail, indent, bare, ast_loc);
             }
             else {
@@ -3462,6 +3470,8 @@ static int is_term_name(const char* name) {
 
 static const char *ast__name(const node_t* expr, int* term) {
     if (expr->type == NODE_REFERENCE) {
+        if (expr->data.reference.rule->data.rule.inline_)
+            return NULL;
         *term = is_term_name(expr->data.reference.name);
         return expr->data.reference.var ?
             expr->data.reference.var : expr->data.reference.name;
@@ -5037,12 +5047,14 @@ static bool_t generate(context_t *ctx) {
         if (ctx->rules.len > 0) {
             stream__printf(
                 &sstream,
-                "    if (pcc_apply_rule(ctx, pcc_evaluate_rule_%s, &ctx->thunks, ret))\n",
+                "    if (pcc_apply_rule(ctx, pcc_evaluate_rule_%s, &ctx->thunks, ret)) {\n",
                 ctx->rules.buf[0]->data.rule.name
             );
             stream__puts(
                 &sstream,
+                "        pcc_do_action(ctx, &ctx->thunks, ret);\n"
                 "        PCC_ACTION(ctx, &ctx->thunks, ret);\n"
+                "    }\n"
                 "    else\n"
                 "        PCC_ERROR(ctx->auxil);\n"
                 "    pcc_commit_buffer(ctx);\n"
@@ -5070,12 +5082,12 @@ static bool_t generate(context_t *ctx) {
             size_t i;
             stream__printf(
                 &sstream,
-                "const char **%s_fragments() {\n"
-                "    static const char *fragments[] = {\n",
+                "const char **%s_optimizable() {\n"
+                "    static const char *optimizable[] = {\n",
                 get_prefix(ctx)
             );
             for (i = 0; i < ctx->rules.len; i++) {
-                if (ctx->rules.buf[i]->data.rule.fragment) {
+                if (ctx->rules.buf[i]->data.rule.optimizable) {
                     stream__printf(
                         &sstream,
                         "        \"%s\",\n",
@@ -5087,7 +5099,7 @@ static bool_t generate(context_t *ctx) {
                 &sstream,
                 "        0\n"
                 "    };\n"
-                "    return fragments;\n"
+                "    return optimizable;\n"
                 "}\n"
             );
         }
@@ -5125,7 +5137,7 @@ static bool_t generate(context_t *ctx) {
         );
         stream__printf(
             &hstream,
-            "const char **%s_fragments();\n",
+            "const char **%s_optimizable();\n",
             get_prefix(ctx)
         );
         stream__puts(

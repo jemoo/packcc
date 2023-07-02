@@ -11,7 +11,7 @@
 #include <functional>
 #include <iostream>
 
-#include "ast.h"
+#include "include/ast.h"
 
 using namespace std;
 
@@ -62,6 +62,7 @@ struct VsParser {
     size_t len;
     size_t rp;
     vector<size_t> lines;
+    int errors;
 
     std::vector<AstPtr> ast_nodes;
     AstPtr root_node;
@@ -560,19 +561,35 @@ void vsp_init_listener(vsp_internal_listener_t* l) {
  *  Ast
  *---------------------------------------------------------------------------*/
 
-//void vsp_print_ast_node(AstPtr node) {
-//    if (!node) {
-//        printf("null");
-//    }
-//    auto parent = node->parent.lock();
-//    if (parent) {
-//        vsp_print_ast_node(parent);
-//        printf(".%s", node->name.data());
-//    }
-//    else {
-//        printf("%s", node->name.data());
-//    }
-//}
+extern "C" const char** vsharp_optimizable();
+
+std::vector<std::string> get_ast_opt_rules() {
+    const char** optimizable = vsharp_optimizable();
+    std::vector<std::string> rules;
+    for (int i = 0;; i++) {
+        const char* name = optimizable[i];
+        if (!name) {
+            break;
+        }
+        rules.push_back(name);
+    }
+    return rules;
+}
+
+void vsp_print_ast_node(AstPtr node) {
+    if (!node) {
+        //printf("null");
+        return;
+    }
+    auto parent = node->parent.lock();
+    if (parent) {
+        vsp_print_ast_node(parent);
+        printf(".%s", node->name.data());
+    }
+    else {
+        printf("%s", node->name.data());
+    }
+}
 
 void vsp_ast_push(vsparser_t* p_, const char* name, int term, size_t start, size_t end) {
     auto p = (VsParser*)p_;
@@ -679,7 +696,8 @@ int main() {
 
     if (p.root_node)
     {
-        //p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        ast_flush(p.root_node);
         cout << "--------------------------------------------------" << endl;
         cout << ast_to_s(p.root_node);
     }
@@ -694,6 +712,29 @@ int main() {
  *---------------------------------------------------------------------------*/
 
 #ifdef VSP_LIB
+
+void vsp_parse2(const char* file_path, const char* src, int len, void (*callback)(void*, AstNode*, size_t), void* user_data) {
+
+    VsParser p = {};
+    p.src = src;
+    p.len = len;
+    p.rp = 0;
+    p.lines.push_back(0);
+
+    printf("parse: %s\r\n", file_path);
+    vsharp_context_t* ctx = vsharp_create(&p.base);
+    vsharp_parse(ctx, NULL);
+    vsharp_destroy(ctx);
+
+    if (p.root_node && callback) {
+        p.root_node = AstOptimizer(false, get_ast_opt_rules()).optimize(p.root_node);
+        ast_flush(p.root_node);
+        cout << "--------------------------------------------------" << endl;
+        cout << ast_to_s(p.root_node);
+
+        callback(user_data, p.root_node.get(), p.lines.size());
+    }
+}
 
 void vsp_parse(const char* file_path, const char* src, int len, vsp_listener_t* listener) {
 
@@ -832,6 +873,13 @@ void vsp_debug(VsParser* p, int event, const char* rule, int level, size_t pos, 
 
 void vsp_error(VsParser* p) {
     fprintf(stderr, "Syntax error\n");
+}
+
+void vsp_syntax_error(VsParser* p, const char* msg, const char* text, size_t start, size_t stop) {
+    p->errors++;
+    size_t line, col;
+    vsp_compute_line_and_column(p, start, line, col);
+    fprintf(stderr, "syntax error: %s at line:%lld, col:%lld\n", msg, line+1, col+1);
 }
 
 #ifdef __cplusplus
