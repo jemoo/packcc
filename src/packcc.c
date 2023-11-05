@@ -2614,6 +2614,9 @@ static bool_t parse(context_t *ctx) {
         }
         for (i = 1; i < ctx->rules.len; i++) {
             if (ctx->rules.buf[i]->data.rule.ref == 0) {
+                if (ctx->rules.buf[i]->data.rule.name[0] == '_' &&
+                    ctx->rules.buf[i]->data.rule.name[1] == '\0')
+                    continue;
                 print_error("%s:" FMT_LU ":" FMT_LU ": Never used rule '%s'\n",
                     ctx->iname,
                     (ulong_t)(ctx->rules.buf[i]->data.rule.line + 1), (ulong_t)(ctx->rules.buf[i]->data.rule.col + 1),
