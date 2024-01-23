@@ -2621,7 +2621,7 @@ static bool_t parse(context_t *ctx) {
                     ctx->iname,
                     (ulong_t)(ctx->rules.buf[i]->data.rule.line + 1), (ulong_t)(ctx->rules.buf[i]->data.rule.col + 1),
                     ctx->rules.buf[i]->data.rule.name);
-                ctx->errnum++;
+                //ctx->errnum++;
             }
             else if (ctx->rules.buf[i]->data.rule.ref < 0) {
                 print_error("%s:" FMT_LU ":" FMT_LU ": Multiple definition of rule '%s'\n",
