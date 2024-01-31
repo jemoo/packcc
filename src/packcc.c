@@ -3073,9 +3073,12 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", l);
                     stream__write_characters(gen->stream, ' ', indent);
-                    stream__printf(gen->stream, "PCC_AST_ERROR(ctx, \"%s\", %d, p%d, ctx->cur);\n",
+                    stream__printf(gen->stream, "PCC_AST_ERROR(ctx, chunk, \"%s\", %d, p%d, ctx->cur);\n",
                         name, term, gen->scope);
                     stream__write_characters(gen->stream, ' ', indent);
+                    stream__printf(gen->stream, "ctx->level--;\n");
+                    stream__write_characters(gen->stream, ' ', indent);
+                    stream__printf(gen->stream, "return chunk;\n");
                     stream__printf(gen->stream, "goto L%04d;\n", onfail);
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", m);
@@ -5093,7 +5096,7 @@ static bool_t generate(context_t *ctx) {
                 "        PCC_ACTION(ctx, &ctx->thunks, ret);\n"
                 "    }\n"
                 "    else\n"
-                "        PCC_ERROR(ctx->auxil, ctx->cur);\n"
+                "        PCC_ERROR(ctx->auxil);\n"
                 "    pcc_commit_buffer(ctx);\n"
             );
         }
