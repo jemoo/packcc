@@ -168,7 +168,7 @@ typedef struct node_rule_tag {
     node_const_array_t codes;
     size_t line;
     size_t col;
-    int inline_;
+    int fragment;
     int optimizable;
 } node_rule_t;
 
@@ -1255,7 +1255,7 @@ static node_t *create_node(node_type_t type) {
         node_const_array__init(&node->data.rule.codes);
         node->data.rule.line = VOID_VALUE;
         node->data.rule.col = VOID_VALUE;
-        node->data.rule.inline_ = 0;
+        node->data.rule.fragment = 0;
         node->data.rule.optimizable = 0;
         break;
     case NODE_REFERENCE:
@@ -2305,7 +2305,10 @@ static node_t *parse_term(context_t *ctx, node_t *rule) {
             node_const_array__add(&rule->data.rule.codes, n_t);
         }
         else {
-            goto EXCEPTION;
+            n_t = create_node(NODE_QUANTITY);
+            n_t->data.quantity.min = 1;
+            n_t->data.quantity.max = 1;
+            n_t->data.quantity.expr = n_r;
         }
     }
     else {
@@ -2395,11 +2398,11 @@ EXCEPTION:;
 }
 
 static node_t *parse_rule(context_t *ctx) {
-    int inline_ = 0;
+    int fragment = 0;
     int optimizable = 0;
-    if (match_string(ctx, "inline")) {
+    if (match_string(ctx, "fragment")) {
         match_spaces(ctx);
-        inline_ = 1;
+        fragment = 1;
     }
     else if (match_string(ctx, "optimizable")) {
         match_spaces(ctx);
@@ -2427,7 +2430,7 @@ static node_t *parse_rule(context_t *ctx) {
     n_r->data.rule.name = strndup_e(ctx->buffer.buf + p, q - p);
     n_r->data.rule.line = l;
     n_r->data.rule.col = m;
-    n_r->data.rule.inline_ = inline_;
+    n_r->data.rule.fragment = fragment;
     n_r->data.rule.optimizable = optimizable;
     return n_r;
 
@@ -2750,6 +2753,21 @@ static void ast__match(stream_t* stream, const char *name, node_t* expr) {
     stream__printf(stream, ", 0); \n");
 }
 
+static int is_term_name(const char* name) {
+    return name[0] >= 'A' && name[0] <= 'Z';
+}
+
+static const char* ast__name(const node_t* expr, int* term) {
+    if (expr->type == NODE_REFERENCE) {
+        if (expr->data.reference.rule->data.rule.fragment)
+            return NULL;
+        *term = is_term_name(expr->data.reference.name);
+        return expr->data.reference.var ?
+            expr->data.reference.var : expr->data.reference.name;
+    }
+    return NULL;
+}
+
 static code_reach_t generate_matching_string_code(generate_t *gen, const char *value, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
     const size_t n = (value != NULL) ? strlen(value) : 0;
     if (n > 0) {
@@ -3038,7 +3056,38 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
     }
     else if (max == 1) {
         if (min > 0) {
-            return generate_code(gen, expr, onfail, indent, bare, ast_loc);
+            if (!bare) {
+                stream__write_characters(gen->stream, ' ', indent);
+                stream__puts(gen->stream, "{\n");
+                indent += 4;
+                gen->scope++;
+            }
+            {
+                int term = 0;
+                const char* name = ast__name(expr, &term);
+                const int l = ++gen->label;
+                if (generate_code(gen, expr, l, indent, TRUE, ast_loc) != CODE_REACH__ALWAYS_SUCCEED) {
+                    const int m = ++gen->label;
+                    stream__write_characters(gen->stream, ' ', indent);
+                    stream__printf(gen->stream, "goto L%04d;\n", m);
+                    if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
+                    stream__printf(gen->stream, "L%04d:;\n", l);
+                    stream__write_characters(gen->stream, ' ', indent);
+                    stream__printf(gen->stream, "PCC_AST_ERROR(ctx, \"%s\", %d, p%d, ctx->cur);\n",
+                        name, term, gen->scope);
+                    stream__write_characters(gen->stream, ' ', indent);
+                    stream__printf(gen->stream, "goto L%04d;\n", onfail);
+                    if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
+                    stream__printf(gen->stream, "L%04d:;\n", m);
+                }
+            }
+            if (!bare) {
+                gen->scope--;
+                indent -= 4;
+                stream__write_characters(gen->stream, ' ', indent);
+                stream__puts(gen->stream, "}\n");
+            }
+            return CODE_REACH__ALWAYS_SUCCEED;
         }
         else {
             if (!bare) {
@@ -3419,7 +3468,7 @@ static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfa
                 node->data.reference.name, (ulong_t)node->data.reference.index, onfail);
         }
         else {
-            if (node->data.reference.rule->data.rule.inline_) {
+            if (node->data.reference.rule->data.rule.fragment) {
                 generate_code(gen, node->data.reference.rule->data.rule.expr, onfail, indent, bare, ast_loc);
             }
             else {
@@ -3465,21 +3514,6 @@ static code_reach_t _generate_code(generate_t *gen, const node_t *node, int onfa
         print_error("Internal error [%d]\n", __LINE__);
         exit(-1);
     }
-}
-
-static int is_term_name(const char* name) {
-    return name[0] >= 'A' && name[0] <= 'Z';
-}
-
-static const char *ast__name(const node_t* expr, int* term) {
-    if (expr->type == NODE_REFERENCE) {
-        if (expr->data.reference.rule->data.rule.inline_)
-            return NULL;
-        *term = is_term_name(expr->data.reference.name);
-        return expr->data.reference.var ?
-            expr->data.reference.var : expr->data.reference.name;
-    }
-    return NULL;
 }
 
 static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfail, size_t indent, bool_t bare, ast_loc_t* ast_loc) {
