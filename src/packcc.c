@@ -2757,10 +2757,11 @@ static int is_term_name(const char* name) {
     return name[0] >= 'A' && name[0] <= 'Z';
 }
 
-static const char* ast__name(const node_t* expr, int* term) {
+static const char* ast__name(const node_t* expr, int* term, int fragment_name) {
     if (expr->type == NODE_REFERENCE) {
-        if (expr->data.reference.rule->data.rule.fragment)
+        if (expr->data.reference.rule->data.rule.fragment && !fragment_name) {
             return NULL;
+        }
         *term = is_term_name(expr->data.reference.name);
         return expr->data.reference.var ?
             expr->data.reference.var : expr->data.reference.name;
@@ -3064,7 +3065,7 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
             }
             {
                 int term = 0;
-                const char* name = ast__name(expr, &term);
+                const char* name = ast__name(expr, &term, 1);
                 const int l = ++gen->label;
                 if (generate_code(gen, expr, l, indent, TRUE, ast_loc) != CODE_REACH__ALWAYS_SUCCEED) {
                     const int m = ++gen->label;
@@ -3073,13 +3074,10 @@ static code_reach_t generate_quantifying_code(generate_t *gen, const node_t *exp
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", l);
                     stream__write_characters(gen->stream, ' ', indent);
-                    stream__printf(gen->stream, "PCC_AST_ERROR(ctx, chunk, \"%s\", %d, p%d, ctx->cur);\n",
-                        name, term, gen->scope);
+                    stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
                     stream__write_characters(gen->stream, ' ', indent);
-                    stream__printf(gen->stream, "ctx->level--;\n");
-                    stream__write_characters(gen->stream, ' ', indent);
-                    stream__printf(gen->stream, "return chunk;\n");
-                    stream__printf(gen->stream, "goto L%04d;\n", onfail);
+                    stream__printf(gen->stream, "PCC_AST_ERROR(ctx, chunk, \"%s\", %d, p%d, q%d);\n",
+                        name, term, gen->scope, gen->scope);
                     if (indent > 4) stream__write_characters(gen->stream, ' ', indent - 4);
                     stream__printf(gen->stream, "L%04d:;\n", m);
                 }
@@ -3536,7 +3534,7 @@ static code_reach_t generate_code(generate_t* gen, const node_t* expr, int onfai
     stream__printf(gen->stream, "q%d = ctx->cur;\n", gen->scope);
     if (!gen->term_mode) {
         int term = 0;
-        const char* name = ast__name(expr, &term);
+        const char* name = ast__name(expr, &term, 0);
         if (name) {
             stream__write_characters(gen->stream, ' ', indent);
             stream__printf(gen->stream, "PCC_AST_INFO(chunk, \"%s\", %d, p%d, q%d);\n",
